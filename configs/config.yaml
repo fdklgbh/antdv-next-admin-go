@@ -1,0 +1,42 @@
+app:
+  name: go-gin-template
+  env: local
+  version: dev
+
+server:
+  mode: release
+  address: ":8080"
+  startupTimeout: 5s
+  readTimeout: 10s
+  writeTimeout: 10s
+  shutdownTimeout: 15s
+  maxHeaderBytes: 16384
+
+database:
+  driver: mysql
+  dsn: "app:password@tcp(127.0.0.1:3306)/app?charset=utf8mb4&parseTime=True&loc=Local"
+  maxOpenConnections: 50
+  maxIdleConnections: 10
+  connectionMaxLifetime: 30m
+
+redis:
+  address: "127.0.0.1:6379"
+  username: ""
+  password: ""
+  database: 0
+  poolSize: 20
+
+auth:
+  permissionCacheTTL: 5m
+
+log:
+  level: info
+  console:
+    enabled: true
+  file:
+    enabled: false
+    path: ./logs/app.log
+    maxSizeMB: 100
+    maxBackups: 10
+    maxAgeDays: 30
+    compress: true

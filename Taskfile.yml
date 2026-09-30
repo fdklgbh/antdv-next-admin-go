@@ -1,0 +1,68 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+
+version: '3'
+
+vars:
+  CONFIG: configs/config.yaml
+
+tasks:
+  default:
+    desc: 显示可用任务
+    cmds:
+      - task --list
+    silent: true
+
+  run:
+    desc: 使用指定配置启动 API
+    cmds:
+      - go run ./cmd/api -config {{.CONFIG | shellQuote}}
+
+  fmt:
+    desc: 格式化指定 Go 文件（task fmt -- 文件列表）
+    preconditions:
+      - sh: test -n {{.CLI_ARGS | shellQuote}}
+        msg: 请在 -- 后指定本次修改的 Go 文件
+    cmds:
+      - gofmt -w {{.CLI_ARGS}}
+
+  test:
+    desc: 运行所有 Go 测试
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: 执行 Go 静态检查
+    cmds:
+      - go vet ./...
+
+  build:
+    desc: 编译所有 Go 包，链接时移除符号表和调试信息
+    cmds:
+      - go build -ldflags="-s -w" ./...
+
+  check:
+    desc: 依次格式化指定文件、测试、静态检查和构建（task check -- 文件列表）
+    cmds:
+      - task: fmt
+        vars:
+          CLI_ARGS: '{{.CLI_ARGS}}'
+      - task: test
+      - task: vet
+      - task: build
+
+  migrate:up:
+    desc: 使用指定配置执行待应用的数据库迁移
+    cmds:
+      - go run ./cmd/migrate -config {{.CONFIG | shellQuote}} -action up
+
+  migrate:down:
+    desc: 使用指定配置回滚最后一个迁移版本（可能删除数据）
+    cmds:
+      - go run ./cmd/migrate -config {{.CONFIG | shellQuote}} -action down
+
+  migrate:new:
+    desc: 生成迁移骨架（task migrate:new NAME=add_user_status）
+    requires:
+      vars: [NAME]
+    cmds:
+      - go run ./tools/migrationgen -name {{.NAME | shellQuote}}
