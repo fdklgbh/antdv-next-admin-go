@@ -3,7 +3,7 @@
 version: '3'
 
 vars:
-  CONFIG: configs/config.yaml
+  CONFIG: configs/config.dev.yaml
 
 tasks:
   default:
@@ -13,7 +13,7 @@ tasks:
     silent: true
 
   run:
-    desc: 使用指定配置启动 API
+    desc: 使用 configs/config.dev.yaml 启动 API（可通过 CONFIG 覆盖）
     cmds:
       - go run ./cmd/api -config {{.CONFIG | shellQuote}}
 
@@ -66,3 +66,10 @@ tasks:
       vars: [NAME]
     cmds:
       - go run ./tools/migrationgen -name {{.NAME | shellQuote}}
+
+  user:create:
+    desc: 创建登录账号，密码从标准输入读取，默认不授予权限
+    requires:
+      vars: [USERNAME]
+    cmds:
+      - go run ./cmd/create-user -config {{.CONFIG | shellQuote}} -username {{.USERNAME | shellQuote}}

@@ -1,0 +1,406 @@
+package repository
+
+import (
+	"antdv-next-admin-go/internal/modules/auth/dto"
+	"antdv-next-admin-go/internal/modules/auth/model"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"gorm.io/gorm"
+	"strconv"
+)
+
+func managementError(err error) error {
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return model.ErrNotFound
+	}
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		return model.ErrConflict
+	}
+	if err != nil {
+		return fmt.Errorf("management repository: %w", err)
+	}
+	return nil
+}
+func (r *Repository) ListUsers(ctx context.Context, q dto.PageQuery) ([]model.User, int64, error) {
+	rows := []model.User{}
+	var total int64
+	db := r.db.WithContext(ctx).Model(&model.User{})
+	if q.Email != "" {
+		db = db.Where("email LIKE ?", "%"+q.Email+"%")
+	}
+	if q.Username != "" {
+		db = db.Where("username LIKE ?", "%"+q.Username+"%")
+	}
+	if q.Status != "" {
+		db = db.Where("enabled = ?", q.Status == "active")
+	}
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, managementError(err)
+	}
+	err := db.Order("id").Offset((q.Current - 1) * q.PageSize).Limit(q.PageSize).Find(&rows).Error
+	return rows, total, managementError(err)
+}
+func (r *Repository) ListRoles(ctx context.Context, q dto.PageQuery) ([]model.Role, int64, error) {
+	rows := []model.Role{}
+	var total int64
+	db := r.db.WithContext(ctx).Model(&model.Role{})
+	if q.Name != "" {
+		db = db.Where("name LIKE ?", "%"+q.Name+"%")
+	}
+	if q.Code != "" {
+		db = db.Where("code LIKE ?", "%"+q.Code+"%")
+	}
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, managementError(err)
+	}
+	err := db.Order("id").Offset((q.Current - 1) * q.PageSize).Limit(q.PageSize).Find(&rows).Error
+	return rows, total, managementError(err)
+}
+func (r *Repository) RoleByID(ctx context.Context, id int64) (model.Role, error) {
+	var role model.Role
+	err := r.db.WithContext(ctx).First(&role, id).Error
+	return role, managementError(err)
+}
+func (r *Repository) ManagedUser(ctx context.Context, id int64) (model.User, error) {
+	var user model.User
+	err := r.db.WithContext(ctx).First(&user, id).Error
+	return user, managementError(err)
+}
+func isSuper(tx *gorm.DB, id int64) (bool, error) {
+	var count int64
+	err := tx.Table("auth_user_roles AS ur").Joins("JOIN auth_roles AS r ON r.id = ur.role_id").Where("ur.user_id = ? AND r.code = ?", id, "super_admin").Count(&count).Error
+	return count > 0, err
+}
+
+// 所有管理写操作共用权限写锁；提交前持久化受影响用户，提交后由 Service 清理缓存。
+func (r *Repository) manage(ctx context.Context, key string, fn func(*gorm.DB) error) error {
+	return managementError(r.permissionTransaction(ctx, func(tx *gorm.DB) error {
+		var ids []int64
+		if err := tx.Model(&model.User{}).Pluck("id", &ids).Error; err != nil {
+			return err
+		}
+		if err := fn(tx); err != nil {
+			return err
+		}
+		return enqueueInvalidations(tx, key, ids)
+	}))
+}
+func (r *Repository) SaveUser(ctx context.Context, actor int64, user *model.User, roleIDs []int64, key string) error {
+	return r.manage(ctx, key, func(tx *gorm.DB) error {
+		roles := []model.Role{}
+		if len(roleIDs) > 0 {
+			if err := tx.Where("id IN ?", roleIDs).Find(&roles).Error; err != nil {
+				return err
+			}
+		}
+		if len(roles) != len(roleIDs) {
+			return model.ErrInvalid
+		}
+		actorSuper, err := isSuper(tx, actor)
+		if err != nil {
+			return err
+		}
+		var requestedCodes []string
+		if len(roleIDs) > 0 {
+			if err := tx.Model(&model.RolePermission{}).Where("role_id IN ?", roleIDs).Pluck("permission_code", &requestedCodes).Error; err != nil {
+				return err
+			}
+		}
+		if err := grantable(tx, actor, requestedCodes); err != nil {
+			return err
+		}
+		assigningSuper := false
+		for _, role := range roles {
+			if role.Code == "super_admin" {
+				assigningSuper = true
+			}
+		}
+		if assigningSuper && !actorSuper {
+			return model.ErrProtected
+		}
+		if user.ID == 0 {
+			if err := tx.Create(user).Error; err != nil {
+				return err
+			}
+		} else {
+			var old model.User
+			if err := tx.First(&old, user.ID).Error; err != nil {
+				return err
+			}
+			protected, err := isSuper(tx, user.ID)
+			if err != nil {
+				return err
+			}
+			if protected && (!actorSuper || !assigningSuper || !user.Enabled) {
+				return model.ErrProtected
+			}
+			if user.Username != old.Username {
+				return model.ErrInvalid
+			}
+			if user.ID == actor && !user.Enabled {
+				return model.ErrProtected
+			}
+			if err := tx.Model(&old).Updates(map[string]any{"display_name": user.DisplayName, "email": user.Email, "phone": user.Phone, "gender": user.Gender, "bio": user.Bio, "enabled": user.Enabled}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("user_id = ?", user.ID).Delete(&model.UserRole{}).Error; err != nil {
+			return err
+		}
+		for _, id := range roleIDs {
+			if err := tx.Create(&model.UserRole{UserID: user.ID, RoleID: id}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+func (r *Repository) DeleteUser(ctx context.Context, actor, id int64, key string) error {
+	return r.manage(ctx, key, func(tx *gorm.DB) error {
+		var user model.User
+		if err := tx.First(&user, id).Error; err != nil {
+			return err
+		}
+		protected, err := isSuper(tx, id)
+		if err != nil {
+			return err
+		}
+		if protected || actor == id {
+			return model.ErrProtected
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&model.UserRole{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("user_id = ?", id).Delete(&model.UserPermission{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&user).Error
+	})
+}
+func (r *Repository) SaveRole(ctx context.Context, actor int64, role *model.Role, codes []string, key string) error {
+	return r.manage(ctx, key, func(tx *gorm.DB) error {
+		if err := grantable(tx, actor, codes); err != nil {
+			return err
+		}
+		if role.ID != 0 {
+			var current []string
+			if err := tx.Model(&model.RolePermission{}).Where("role_id = ?", role.ID).Pluck("permission_code", &current).Error; err != nil {
+				return err
+			}
+			if err := grantable(tx, actor, current); err != nil {
+				return err
+			}
+		}
+		if role.Code == "super_admin" {
+			return model.ErrProtected
+		}
+		var count int64
+		if len(codes) > 0 {
+			if err := tx.Model(&model.Permission{}).Where("code IN ?", codes).Count(&count).Error; err != nil {
+				return err
+			}
+		}
+		if int(count) != len(codes) {
+			return model.ErrInvalid
+		}
+		if role.ID == 0 {
+			if err := tx.Create(role).Error; err != nil {
+				return err
+			}
+		} else {
+			var old model.Role
+			if err := tx.First(&old, role.ID).Error; err != nil {
+				return err
+			}
+			if old.Code == "super_admin" {
+				return model.ErrProtected
+			}
+			if old.Code != role.Code {
+				return model.ErrInvalid
+			}
+			if err := tx.Model(&old).Updates(map[string]any{"name": role.Name, "description": role.Description}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("role_id = ?", role.ID).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
+		}
+		for _, code := range codes {
+			if code == "*" {
+				return model.ErrProtected
+			}
+			if err := tx.Create(&model.RolePermission{RoleID: role.ID, PermissionCode: code}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+func (r *Repository) DeleteRole(ctx context.Context, id int64, key string) error {
+	return r.manage(ctx, key, func(tx *gorm.DB) error {
+		var role model.Role
+		if err := tx.First(&role, id).Error; err != nil {
+			return err
+		}
+		switch role.Code {
+		case "super_admin", "admin", "manager", "user", "guest":
+			return model.ErrProtected
+		}
+		var count int64
+		if err := tx.Model(&model.UserRole{}).Where("role_id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return model.ErrConflict
+		}
+		if err := tx.Where("role_id = ?", id).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&role).Error
+	})
+}
+func permissionItems(tx *gorm.DB) ([]dto.PermissionInfo, error) {
+	var rows []model.Permission
+	if err := tx.Order("code").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	items := make([]dto.PermissionInfo, 0, len(rows))
+	for _, row := range rows {
+		var p dto.PermissionInfo
+		if err := json.Unmarshal([]byte(row.Definition), &p); err != nil {
+			return nil, err
+		}
+		items = append(items, p)
+	}
+	return items, nil
+}
+func (r *Repository) SavePermission(ctx context.Context, id string, p *dto.PermissionInfo, key string) error {
+	return r.manage(ctx, key, func(tx *gorm.DB) error {
+		items, err := permissionItems(tx)
+		if err != nil {
+			return err
+		}
+		byID := map[string]dto.PermissionInfo{}
+		for _, item := range items {
+			byID[item.ID] = item
+		}
+		if id != "" {
+			old, ok := byID[id]
+			if !ok {
+				return model.ErrNotFound
+			}
+			if old.Code != p.Code {
+				return model.ErrInvalid
+			}
+			p.ID = id
+		}
+		parent := p.ParentID
+		seen := map[string]bool{p.ID: true}
+		for parent != "" {
+			if seen[parent] {
+				return model.ErrInvalid
+			}
+			seen[parent] = true
+			item, ok := byID[parent]
+			if !ok || item.Type != "menu" {
+				return model.ErrInvalid
+			}
+			parent = item.ParentID
+		}
+		if p.Type != "menu" {
+			for _, item := range items {
+				if item.ParentID == p.ID {
+					return model.ErrConflict
+				}
+			}
+		}
+		raw, err := json.Marshal(p)
+		if err != nil {
+			return err
+		}
+		row := model.Permission{Code: p.Code, Definition: string(raw)}
+		if id == "" {
+			return tx.Create(&row).Error
+		}
+		return tx.Model(&model.Permission{}).Where("code = ?", p.Code).Update("definition", row.Definition).Error
+	})
+}
+func (r *Repository) DeletePermission(ctx context.Context, id, key string) error {
+	return r.manage(ctx, key, func(tx *gorm.DB) error {
+		items, err := permissionItems(tx)
+		if err != nil {
+			return err
+		}
+		code := ""
+		for _, p := range items {
+			if p.ParentID == id {
+				return model.ErrConflict
+			}
+			if p.ID == id {
+				code = p.Code
+			}
+		}
+		if code == "" {
+			return model.ErrNotFound
+		}
+		if err := tx.Where("permission_code = ?", code).Delete(&model.RolePermission{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("permission_code = ?", code).Delete(&model.UserPermission{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("permission_code = ?", code).Delete(&model.RoutePermission{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("code = ?", code).Delete(&model.Permission{}).Error
+	})
+}
+func (r *Repository) ChangePassword(ctx context.Context, id int64, oldHash, newHash string) error {
+	result := r.db.WithContext(ctx).Model(&model.User{}).Where("id = ? AND password_hash = ? AND enabled = ?", id, oldHash, true).Update("password_hash", newHash)
+	if result.Error != nil {
+		return managementError(result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return model.ErrUnauthenticated
+	}
+	return nil
+}
+func ParseIDs(roles []dto.RoleInfo) ([]int64, error) {
+	ids := []int64{}
+	seen := map[int64]bool{}
+	for _, role := range roles {
+		id, err := strconv.ParseInt(role.ID, 10, 64)
+		if err != nil || id <= 0 || seen[id] {
+			return nil, model.ErrInvalid
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func grantable(tx *gorm.DB, actor int64, codes []string) error {
+	super, err := isSuper(tx, actor)
+	if err != nil {
+		return err
+	}
+	if super {
+		return nil
+	}
+	var owned []string
+	if err := tx.Raw("SELECT permission_code FROM (?) AS direct_codes UNION SELECT permission_code FROM (?) AS role_codes", effectiveCodes(tx, actor), roleCodes(tx, actor)).Scan(&owned).Error; err != nil {
+		return err
+	}
+	allowed := map[string]bool{}
+	for _, code := range owned {
+		allowed[code] = true
+	}
+	for _, code := range codes {
+		if code == "*" || !allowed[code] {
+			return model.ErrProtected
+		}
+	}
+	return nil
+}

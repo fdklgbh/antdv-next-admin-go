@@ -1,6 +1,6 @@
 package account
 
-import "go-gin-template/internal/modules/account/handler"
+import "antdv-next-admin-go/internal/modules/account/handler"
 
 type Module struct{ Handler *handler.Handler }
 

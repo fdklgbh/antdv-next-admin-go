@@ -5,17 +5,18 @@ import (
 	"errors"
 	"fmt"
 
+	"antdv-next-admin-go/internal/config"
+	"antdv-next-admin-go/internal/httpserver"
+	basecache "antdv-next-admin-go/internal/infrastructure/cache"
+	"antdv-next-admin-go/internal/infrastructure/database"
+	"antdv-next-admin-go/internal/infrastructure/logger"
+	redisinfra "antdv-next-admin-go/internal/infrastructure/redis"
+	"antdv-next-admin-go/internal/modules/account"
+	"antdv-next-admin-go/internal/modules/admin"
+	"antdv-next-admin-go/internal/modules/auth"
+	"antdv-next-admin-go/internal/modules/health"
+	"antdv-next-admin-go/internal/modules/system"
 	"github.com/redis/go-redis/v9"
-	"go-gin-template/internal/config"
-	"go-gin-template/internal/httpserver"
-	basecache "go-gin-template/internal/infrastructure/cache"
-	"go-gin-template/internal/infrastructure/database"
-	"go-gin-template/internal/infrastructure/logger"
-	redisinfra "go-gin-template/internal/infrastructure/redis"
-	"go-gin-template/internal/modules/account"
-	"go-gin-template/internal/modules/admin"
-	"go-gin-template/internal/modules/auth"
-	"go-gin-template/internal/modules/health"
 )
 
 type redisPinger struct{ client *redis.Client }
@@ -55,6 +56,9 @@ func buildDependencies(ctx context.Context, cfg config.Config) (_ dependencies, 
 		return dependencies{}, fmt.Errorf("get database connection pool: %w", err)
 	}
 	store := basecache.NewRedisStore(redisClient)
-	authModule := auth.NewModule(db, store, log, cfg.App.Name, cfg.Auth)
-	return dependencies{routerDeps: httpserver.Dependencies{Logger: log, Auth: authModule, Account: account.NewModule(), Admin: admin.NewModule(), Health: health.NewModule(sqlDB, redisPinger{client: redisClient}, log)}, closers: closers}, nil
+	authModule := auth.NewModule(db, store, log, cfg.Redis.KeyPrefix, cfg.Auth)
+	if err := initializeSuperAdmin(logger.WithLogger(ctx, authModule.Logger()), authModule, cfg.Auth.SuperAdminUsername); err != nil {
+		return dependencies{}, err
+	}
+	return dependencies{routerDeps: httpserver.Dependencies{System: system.NewModule(db, log), Logger: log, Auth: authModule, Account: account.NewModule(), Admin: admin.NewModule(), Health: health.NewModule(sqlDB, redisPinger{client: redisClient}, log)}, closers: closers}, nil
 }

@@ -1,13 +1,15 @@
 package cache
 
 import (
+	"antdv-next-admin-go/internal/modules/auth/model"
 	"context"
-	"go-gin-template/internal/modules/auth/model"
 	"time"
 )
 
 type SessionCache interface {
-	GetPrincipal(context.Context, string) (model.Principal, error)
+	GetRefresh(context.Context, string) (model.RefreshSession, error)
+	SetRefresh(context.Context, string, model.RefreshSession, time.Duration) error
+	DeleteRefresh(context.Context, string) error
 }
 type PermissionCache interface {
 	GetRoutes(context.Context, int64) ([]model.Route, error)

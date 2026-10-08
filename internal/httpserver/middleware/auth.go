@@ -6,13 +6,13 @@ import (
 	"net/http"
 	"strings"
 
+	"antdv-next-admin-go/internal/infrastructure/logger"
+	authcode "antdv-next-admin-go/internal/modules/auth/errcode"
+	"antdv-next-admin-go/internal/modules/auth/model"
+	"antdv-next-admin-go/internal/shared/contextx"
+	apperrors "antdv-next-admin-go/internal/shared/errors"
+	"antdv-next-admin-go/internal/shared/response"
 	"github.com/gin-gonic/gin"
-	"go-gin-template/internal/infrastructure/logger"
-	authcode "go-gin-template/internal/modules/auth/errcode"
-	"go-gin-template/internal/modules/auth/model"
-	"go-gin-template/internal/shared/contextx"
-	apperrors "go-gin-template/internal/shared/errors"
-	"go-gin-template/internal/shared/response"
 )
 
 const principalKey = "auth.principal"
@@ -25,21 +25,21 @@ type Authorizer interface {
 	Authorize(context.Context, int64, string, string) (bool, error)
 }
 
-func RequireLogin(service Authenticator, log logger.Logger) gin.HandlerFunc {
+func RequireLogin(service Authenticator) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := bearerToken(c.GetHeader("Authorization"))
 		if !ok {
-			response.Abort(c, apperrors.New(authcode.Unauthenticated, http.StatusUnauthorized, "authentication required", nil))
+			response.Abort(c, apperrors.New(authcode.Unauthenticated, http.StatusUnauthorized, "登录状态已失效，请重新登录", nil))
 			return
 		}
 		principal, err := service.Authenticate(c.Request.Context(), token)
 		if errors.Is(err, model.ErrUnauthenticated) {
-			response.Abort(c, apperrors.New(authcode.Unauthenticated, http.StatusUnauthorized, "authentication required", err))
+			response.Abort(c, apperrors.New(authcode.Unauthenticated, http.StatusUnauthorized, "登录状态已失效，请重新登录", err))
 			return
 		}
 		if err != nil {
-			log.Error(c.Request.Context(), "authentication_failed", logger.Err(err))
-			response.Abort(c, apperrors.New(authcode.ServiceUnavailable, http.StatusServiceUnavailable, "authentication service unavailable", err))
+			logger.FromContext(c.Request.Context()).Error("authentication_failed", logger.Err(err))
+			response.Abort(c, apperrors.New(authcode.ServiceUnavailable, http.StatusServiceUnavailable, "认证或权限服务暂不可用，请稍后重试", err))
 			return
 		}
 		c.Set(principalKey, principal)
@@ -47,21 +47,21 @@ func RequireLogin(service Authenticator, log logger.Logger) gin.HandlerFunc {
 		c.Next()
 	}
 }
-func RequirePermission(service Authorizer, log logger.Logger) gin.HandlerFunc {
+func RequirePermission(service Authorizer) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		principal, ok := CurrentPrincipal(c)
 		if !ok {
-			response.Abort(c, apperrors.New(authcode.Unauthenticated, http.StatusUnauthorized, "authentication required", nil))
+			response.Abort(c, apperrors.New(authcode.Unauthenticated, http.StatusUnauthorized, "登录状态已失效，请重新登录", nil))
 			return
 		}
 		allowed, err := service.Authorize(c.Request.Context(), principal.UserID, c.Request.Method, c.FullPath())
 		if err != nil {
-			log.Error(c.Request.Context(), "authorization_failed", logger.String("method", c.Request.Method), logger.String("route", c.FullPath()), logger.Err(err))
-			response.Abort(c, apperrors.New(authcode.ServiceUnavailable, http.StatusServiceUnavailable, "authorization service unavailable", err))
+			logger.FromContext(c.Request.Context()).Error("authorization_failed", logger.String("method", c.Request.Method), logger.String("route", c.FullPath()), logger.Err(err))
+			response.Abort(c, apperrors.New(authcode.ServiceUnavailable, http.StatusServiceUnavailable, "认证或权限服务暂不可用，请稍后重试", err))
 			return
 		}
 		if !allowed {
-			response.Abort(c, apperrors.New(authcode.PermissionDenied, http.StatusForbidden, "permission denied", nil))
+			response.Abort(c, apperrors.New(authcode.PermissionDenied, http.StatusForbidden, "没有访问权限", nil))
 			return
 		}
 		c.Next()

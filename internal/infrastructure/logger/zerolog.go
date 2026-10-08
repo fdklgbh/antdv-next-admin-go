@@ -1,11 +1,11 @@
 package logger
 
 import (
-	"context"
 	"fmt"
 
+	"antdv-next-admin-go/internal/config"
+
 	"github.com/rs/zerolog"
-	"go-gin-template/internal/config"
 )
 
 type zerologAdapter struct{ logger zerolog.Logger }
@@ -22,17 +22,17 @@ func New(cfg config.Log, service, environment, version string) (Logger, func() e
 	base := zerolog.New(writer).Level(level).With().Timestamp().Str("service", service).Str("environment", environment).Str("version", version).Logger()
 	return &zerologAdapter{logger: base}, closeWriter, nil
 }
-func (l *zerologAdapter) Debug(ctx context.Context, message string, fields ...Field) {
-	write(contextEvent(ctx, l.logger.Debug()), message, fields)
+func (l *zerologAdapter) Debug(message string, fields ...Field) {
+	write(l.logger.Debug(), message, fields)
 }
-func (l *zerologAdapter) Info(ctx context.Context, message string, fields ...Field) {
-	write(contextEvent(ctx, l.logger.Info()), message, fields)
+func (l *zerologAdapter) Info(message string, fields ...Field) {
+	write(l.logger.Info(), message, fields)
 }
-func (l *zerologAdapter) Warn(ctx context.Context, message string, fields ...Field) {
-	write(contextEvent(ctx, l.logger.Warn()), message, fields)
+func (l *zerologAdapter) Warn(message string, fields ...Field) {
+	write(l.logger.Warn(), message, fields)
 }
-func (l *zerologAdapter) Error(ctx context.Context, message string, fields ...Field) {
-	write(contextEvent(ctx, l.logger.Error()), message, fields)
+func (l *zerologAdapter) Error(message string, fields ...Field) {
+	write(l.logger.Error(), message, fields)
 }
 func (l *zerologAdapter) With(fields ...Field) Logger {
 	ctx := l.logger.With()

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	basecache "go-gin-template/internal/infrastructure/cache"
-	"go-gin-template/internal/modules/auth/model"
+	basecache "antdv-next-admin-go/internal/infrastructure/cache"
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 type Redis struct {
@@ -24,19 +24,29 @@ type permissionPayload struct {
 func NewRedis(store basecache.Store, sessionKey func(string) string, permissionKey func(int64) string) *Redis {
 	return &Redis{store: store, sessionKey: sessionKey, permissionKey: permissionKey}
 }
-func (c *Redis) GetPrincipal(ctx context.Context, token string) (model.Principal, error) {
+func (c *Redis) GetRefresh(ctx context.Context, token string) (model.RefreshSession, error) {
+	var session model.RefreshSession
 	payload, err := c.store.Get(ctx, c.sessionKey(token))
 	if err != nil {
-		return model.Principal{}, err
+		return session, err
 	}
-	var principal model.Principal
-	if err := json.Unmarshal(payload, &principal); err != nil {
-		return model.Principal{}, fmt.Errorf("decode session cache: %w", err)
+	if err := json.Unmarshal(payload, &session); err != nil {
+		return session, fmt.Errorf("decode refresh session: %w", err)
 	}
-	if principal.UserID <= 0 || principal.Username == "" {
-		return model.Principal{}, fmt.Errorf("invalid session cache")
+	if session.Principal.UserID <= 0 || session.SessionID == "" || session.ExpiresAt.IsZero() {
+		return session, fmt.Errorf("invalid refresh session")
 	}
-	return principal, nil
+	return session, nil
+}
+func (c *Redis) SetRefresh(ctx context.Context, token string, session model.RefreshSession, ttl time.Duration) error {
+	payload, err := json.Marshal(session)
+	if err != nil {
+		return fmt.Errorf("encode refresh session: %w", err)
+	}
+	return c.store.Set(ctx, c.sessionKey(token), payload, ttl)
+}
+func (c *Redis) DeleteRefresh(ctx context.Context, token string) error {
+	return c.store.Delete(ctx, c.sessionKey(token))
 }
 func (c *Redis) GetRoutes(ctx context.Context, userID int64) ([]model.Route, error) {
 	payload, err := c.store.Get(ctx, c.permissionKey(userID))

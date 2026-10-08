@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"go-gin-template/internal/modules/auth/model"
+	"antdv-next-admin-go/internal/modules/auth/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

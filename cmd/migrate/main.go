@@ -7,9 +7,9 @@ import (
 	"log"
 	"os"
 
-	"go-gin-template/internal/config"
-	"go-gin-template/internal/infrastructure/database"
-	"go-gin-template/migrations"
+	"antdv-next-admin-go/internal/config"
+	"antdv-next-admin-go/internal/infrastructure/database"
+	"antdv-next-admin-go/migrations"
 )
 
 func main() {
@@ -19,7 +19,7 @@ func main() {
 	}
 }
 func run() error {
-	configPath := flag.String("config", "configs/config.yaml", "path to YAML config")
+	configPath := flag.String("config", "configs/config.dev.yaml", "path to YAML config")
 	action := flag.String("action", "up", "migration action: up or down")
 	flag.Parse()
 	cfg, err := config.Load(*configPath)

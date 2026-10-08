@@ -9,8 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"go-gin-template/internal/app"
-	"go-gin-template/internal/config"
+	"antdv-next-admin-go/internal/app"
+	"antdv-next-admin-go/internal/config"
 )
 
 func main() {
@@ -21,7 +21,7 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", "configs/config.yaml", "path to YAML config")
+	configPath := flag.String("config", "configs/config.dev.yaml", "path to YAML config")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)

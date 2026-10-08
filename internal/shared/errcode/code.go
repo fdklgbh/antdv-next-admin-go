@@ -7,4 +7,6 @@ const (
 	MethodNotAllowed   = 10003
 	InternalError      = 10004
 	ServiceUnavailable = 10005
+	ResourceConflict   = 10006
+	ResourceProtected  = 10007
 )

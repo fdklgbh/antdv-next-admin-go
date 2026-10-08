@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"go-gin-template/internal/modules/auth/model"
+	"antdv-next-admin-go/internal/modules/auth/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -19,8 +19,8 @@ func (r *Repository) PermissionRoutes(ctx context.Context, userID int64) ([]mode
 	var routes []model.Route
 	err := r.db.WithContext(ctx).Table("route_permissions AS rp").
 		Select("rp.method, rp.route AS path").
-		Joins("JOIN user_permissions AS up ON up.permission_code = rp.permission_code").
-		Where("up.user_id = ? AND rp.enabled = ?", userID, true).Scan(&routes).Error
+		Where("rp.permission_code IN (?) OR rp.permission_code IN (?)", effectiveCodes(r.db, userID), roleCodes(r.db, userID)).
+		Where("rp.enabled = ?", true).Scan(&routes).Error
 	if err != nil {
 		return nil, fmt.Errorf("query permission routes: %w", err)
 	}
@@ -55,7 +55,7 @@ func (r *Repository) UpsertRoute(ctx context.Context, permission model.RoutePerm
 		} else if err != nil && err != gorm.ErrRecordNotFound {
 			return fmt.Errorf("find route permission: %w", err)
 		}
-		if err := tx.Model(&model.UserPermission{}).Distinct("user_id").Where("permission_code IN ?", codes).Pluck("user_id", &userIDs).Error; err != nil {
+		if err := affectedUsers(tx, codes).Pluck("id", &userIDs).Error; err != nil {
 			return fmt.Errorf("query affected users: %w", err)
 		}
 		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "method"}, {Name: "route"}}, DoUpdates: clause.AssignmentColumns([]string{"permission_code", "enabled", "updated_at"})}).Create(&permission).Error; err != nil {
@@ -69,7 +69,7 @@ func (r *Repository) DeletePermissionCode(ctx context.Context, code string) (str
 	key := invalidationKey("delete_permission_code", code)
 	var userIDs []int64
 	err := r.permissionTransaction(ctx, func(tx *gorm.DB) error {
-		if err := tx.Model(&model.UserPermission{}).Distinct("user_id").Where("permission_code = ?", code).Pluck("user_id", &userIDs).Error; err != nil {
+		if err := affectedUsers(tx, []string{code}).Pluck("id", &userIDs).Error; err != nil {
 			return fmt.Errorf("query affected users: %w", err)
 		}
 		if err := tx.Where("permission_code = ?", code).Delete(&model.RoutePermission{}).Error; err != nil {
@@ -77,6 +77,12 @@ func (r *Repository) DeletePermissionCode(ctx context.Context, code string) (str
 		}
 		if err := tx.Where("permission_code = ?", code).Delete(&model.UserPermission{}).Error; err != nil {
 			return fmt.Errorf("delete user permissions: %w", err)
+		}
+		if err := tx.Where("permission_code = ?", code).Delete(&model.RolePermission{}).Error; err != nil {
+			return fmt.Errorf("delete role permissions: %w", err)
+		}
+		if err := tx.Where("code = ?", code).Delete(&model.Permission{}).Error; err != nil {
+			return fmt.Errorf("delete permission definition: %w", err)
 		}
 		return enqueueInvalidations(tx, key, userIDs)
 	})

@@ -1,8 +1,8 @@
 package handler
 
 import (
+	"antdv-next-admin-go/internal/shared/response"
 	"github.com/gin-gonic/gin"
-	"go-gin-template/internal/shared/response"
 )
 
 type Handler struct{}

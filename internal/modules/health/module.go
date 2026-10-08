@@ -1,13 +1,16 @@
 package health
 
 import (
+	"antdv-next-admin-go/internal/infrastructure/logger"
+	"antdv-next-admin-go/internal/modules/health/handler"
 	"database/sql"
-	"go-gin-template/internal/infrastructure/logger"
-	"go-gin-template/internal/modules/health/handler"
 )
 
-type Module struct{ Handler *handler.Handler }
+type Module struct {
+	Handler *handler.Handler
+	logger  logger.Logger
+}
 
 func NewModule(db *sql.DB, redisPinger handler.RedisPinger, log logger.Logger) *Module {
-	return &Module{Handler: handler.New(db, redisPinger, log.With(logger.String("module", "health")))}
+	return &Module{Handler: handler.New(db, redisPinger), logger: log.With(logger.String("module", "health"))}
 }

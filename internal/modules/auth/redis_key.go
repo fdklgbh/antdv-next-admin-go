@@ -6,10 +6,10 @@ import (
 	"strconv"
 )
 
-func sessionKey(app, token string) string {
+func sessionKey(prefix, token string) string {
 	digest := sha256.Sum256([]byte(token))
-	return app + ":auth:session:" + hex.EncodeToString(digest[:])
+	return prefix + ":auth:refresh:" + hex.EncodeToString(digest[:])
 }
-func permissionRoutesKey(app string, userID int64) string {
-	return app + ":auth:permission_routes:" + strconv.FormatInt(userID, 10)
+func permissionRoutesKey(prefix string, userID int64) string {
+	return prefix + ":auth:permission_routes:" + strconv.FormatInt(userID, 10)
 }

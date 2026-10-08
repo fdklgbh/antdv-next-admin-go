@@ -1,9 +1,9 @@
 package database
 
 import (
+	"antdv-next-admin-go/internal/config"
 	"context"
 	"fmt"
-	"go-gin-template/internal/config"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

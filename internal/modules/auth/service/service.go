@@ -4,44 +4,44 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
-	basecache "go-gin-template/internal/infrastructure/cache"
-	"go-gin-template/internal/infrastructure/logger"
-	authcache "go-gin-template/internal/modules/auth/cache"
-	"go-gin-template/internal/modules/auth/model"
-	"go-gin-template/internal/modules/auth/repository"
+	"antdv-next-admin-go/internal/config"
+	basecache "antdv-next-admin-go/internal/infrastructure/cache"
+	"antdv-next-admin-go/internal/infrastructure/logger"
+	authcache "antdv-next-admin-go/internal/modules/auth/cache"
+	"antdv-next-admin-go/internal/modules/auth/model"
+	"antdv-next-admin-go/internal/modules/auth/repository"
 )
 
 type Service struct {
+	authConfig  config.Auth
 	repo        *repository.Repository
 	sessions    authcache.SessionCache
 	permissions authcache.PermissionCache
 	ttl         time.Duration
-	logger      logger.Logger
 }
 
-func New(repo *repository.Repository, sessions authcache.SessionCache, permissions authcache.PermissionCache, ttl time.Duration, log logger.Logger) *Service {
-	return &Service{repo: repo, sessions: sessions, permissions: permissions, ttl: ttl, logger: log}
-}
-func (s *Service) Authenticate(ctx context.Context, token string) (model.Principal, error) {
-	token = strings.TrimSpace(token)
-	if token == "" {
-		return model.Principal{}, model.ErrUnauthenticated
-	}
-	principal, err := s.sessions.GetPrincipal(ctx, token)
-	if errors.Is(err, basecache.ErrMiss) {
-		return model.Principal{}, model.ErrUnauthenticated
-	}
-	if err != nil {
-		return model.Principal{}, fmt.Errorf("get session: %w", err)
-	}
-	return principal, nil
+func New(repo *repository.Repository, sessions authcache.SessionCache, permissions authcache.PermissionCache, cfg config.Auth) *Service {
+	return &Service{repo: repo, sessions: sessions, permissions: permissions, ttl: cfg.PermissionCacheTTL, authConfig: cfg}
 }
 func (s *Service) Authorize(ctx context.Context, userID int64, method, route string) (bool, error) {
 	if userID <= 0 || method == "" || route == "" {
 		return false, fmt.Errorf("user ID, method, and route are required")
+	}
+	user, err := s.repo.UserByID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if !user.Enabled {
+		return false, nil
+	}
+	super, err := s.repo.IsSuperAdmin(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if super {
+		return true, nil
 	}
 	routes, err := s.permissions.GetRoutes(ctx, userID)
 	if errors.Is(err, basecache.ErrMiss) {
@@ -114,7 +114,7 @@ func (s *Service) invalidatePending(ctx context.Context, operation, key string) 
 }
 func (s *Service) invalidate(ctx context.Context, operation string, ids ...int64) error {
 	if err := s.permissions.DeleteUsers(ctx, ids...); err != nil {
-		s.logger.Error(ctx, "permission_cache_invalidation_failed", logger.String("operation", operation), logger.Any("user_ids", ids), logger.Err(err))
+		logger.FromContext(ctx).Error("permission_cache_invalidation_failed", logger.String("operation", operation), logger.Any("user_ids", ids), logger.Err(err))
 		return fmt.Errorf("database committed but invalidate permission cache: %w", err)
 	}
 	return nil

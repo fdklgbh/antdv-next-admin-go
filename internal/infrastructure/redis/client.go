@@ -1,9 +1,9 @@
 package redis
 
 import (
+	"antdv-next-admin-go/internal/config"
 	"context"
 	"fmt"
-	"go-gin-template/internal/config"
 
 	redisclient "github.com/redis/go-redis/v9"
 )

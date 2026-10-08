@@ -1,5 +1,5 @@
 package auth
 
-import "go-gin-template/internal/modules/auth/model"
+import "antdv-next-admin-go/internal/modules/auth/model"
 
 var ErrUnauthenticated = model.ErrUnauthenticated

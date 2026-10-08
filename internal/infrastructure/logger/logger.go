@@ -1,11 +1,9 @@
 package logger
 
-import "context"
-
 type Logger interface {
-	Debug(context.Context, string, ...Field)
-	Info(context.Context, string, ...Field)
-	Warn(context.Context, string, ...Field)
-	Error(context.Context, string, ...Field)
+	Debug(string, ...Field)
+	Info(string, ...Field)
+	Warn(string, ...Field)
+	Error(string, ...Field)
 	With(...Field) Logger
 }

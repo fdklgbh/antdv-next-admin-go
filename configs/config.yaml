@@ -1,42 +1,105 @@
+# 配置模板，不作为 task run 的默认运行配置。
+# 开发环境使用同目录的 config.dev.yaml（已加入 Git 忽略）。
+# 填写开发配置中的 database.dsn、redis 连接信息和 auth.jwtSecret 后直接执行 task run。
+# 配置采用严格校验：未知字段、缺失必填项或无效值会阻止启动，不会静默使用默认值。
+# 时长使用 Go duration 格式，例如 500ms、5s、30m、24h；不支持 7d。
+
 app:
+  # 应用名称，必填，用于日志标识；Redis Key 前缀在 redis.keyPrefix 单独配置。
   name: go-gin-template
+  # 环境标识，必填，用于日志，例如 local、development、production。
   env: local
+  # 应用版本，必填，用于日志。
   version: dev
 
 server:
+  # Gin 运行模式：debug / release / test。
   mode: release
+  # HTTP 监听地址；:8080 监听所有网卡，127.0.0.1:8080 仅允许本机连接。
   address: ":8080"
+  # 初始化依赖的超时，必须大于 0。
   startupTimeout: 5s
+  # HTTP 请求读取超时（含请求头），必须大于 0。
   readTimeout: 10s
+  # HTTP 响应写入超时，必须大于 0。
   writeTimeout: 10s
+  # 优雅退出等待时间，必须大于 0。
   shutdownTimeout: 15s
+  # 请求头最大字节数，范围 1024–1048576。
   maxHeaderBytes: 16384
 
 database:
+  # 数据库驱动：mysql / postgres。切换驱动时必须同步修改 dsn。
   driver: mysql
+  # 必填；以下仅为 MySQL 格式示例，请替换用户名、密码、地址、端口和数据库名。
+  # MySQL 必须启用 parseTime；数据库需预先创建，表结构通过 task migrate:up 创建。
+  # PostgreSQL 示例：host=127.0.0.1 port=5432 user=app password=YOUR_PASSWORD dbname=app sslmode=disable TimeZone=Asia/Shanghai
+  # sslmode=disable 仅适用于可信开发环境；生产按数据库 TLS 配置调整。
   dsn: "app:password@tcp(127.0.0.1:3306)/app?charset=utf8mb4&parseTime=True&loc=Local"
+  # 最大打开连接数，必须大于 0。
   maxOpenConnections: 50
+  # 最大空闲连接数，范围 0–maxOpenConnections。
   maxIdleConnections: 10
+  # 单个连接最长复用时间，必须大于 0。
   connectionMaxLifetime: 30m
 
 redis:
+  # Redis Key 前缀，必填；同一 Redis 中的独立应用/环境应使用不同前缀，无需添加末尾冒号。
+  keyPrefix: go-gin-template
+  # Redis 地址，必填，格式为 host:port。
   address: "127.0.0.1:6379"
+  # Redis ACL 用户名；未使用 ACL 时留空。
   username: ""
+  # Redis 密码；未启用认证时留空。
   password: ""
+  # 数据库索引，必须大于等于 0，且需在服务端支持的索引范围内。
   database: 0
+  # 连接池大小，必须大于 0。
   poolSize: 20
 
 auth:
+  # 首次初始化的超级管理员用户名，必填，最多 64 字符且不能含空白。
+  # 账号不存在时启动自动创建，随机密码仅首次显示在交互终端，不写应用日志。
+  # 初始化成功后以数据库账号和角色为准，修改这些配置不会同步或重新创建账号。
+  superAdminUsername: superadmin
+  # 首次初始化邮箱，必填且须为有效邮箱格式，请改为实际地址；仅新建账号时写入。
+  superAdminEmail: "superadmin@example.com"
+  # 权限缓存有效期，范围大于 0 且不超过 24h。
   permissionCacheTTL: 5m
+  # JWT HS256 签名密钥，必填且至少 32 字符，使用高熵随机值。
+  # 可填写在被 Git 忽略的 config.dev.yaml 中，或通过 AUTH_JWT_SECRET 环境变量覆盖。
+  # 模板故意留空，不提供可直接用于生产的共享密钥；多实例必须使用同一密钥。
+  jwtSecret: ""
+  # JWT 签发者和受众，均必填；签发和验签必须一致。
+  jwtIssuer: go-gin-template
+  jwtAudience: admin-web
+  # Refresh Cookie 是否仅允许 HTTPS。HTTP 开发环境设 false，HTTPS 生产环境设 true。
+  # Cookie 固定为 HttpOnly、SameSite=Lax、Path=/api/auth，不由前端 JavaScript 读取。
+  cookieSecure: false
+  # 允许发起登录、刷新和退出的前端 Origin，至少一项，包含协议和端口，不包含页面路径。
+  # 此项用于请求来源校验，不会自动开启 CORS；推荐前端通过同源 /api 代理访问后端。
+  allowedOrigins:
+    - http://localhost:3000
+    - http://127.0.0.1:3000
+  # Access JWT 固定有效 15 分钟，不通过配置改变。
+  # Refresh Token 不轮换、不延期：未记住登录最长 24 小时；记住登录由请求选择 7/15/30 天。
+  # 退出撤销刷新会话，已签发的 Access JWT 在到期前仍可能有效。
 
 log:
+  # 日志级别：debug / info / warn / error。
   level: info
+  # 控制台和文件输出至少启用一项。
   console:
     enabled: true
   file:
     enabled: false
+    # 文件日志路径；启用文件输出时必填。相对路径以进程工作目录为基准。
     path: ./logs/app.log
+    # 单个日志文件大小上限，单位 MB；启用时范围 1–10240。
     maxSizeMB: 100
+    # 最多保留的历史日志文件数量；启用时范围 1–1000。
     maxBackups: 10
+    # 历史日志最长保留天数；启用时范围 1–3650。
     maxAgeDays: 30
+    # 是否压缩轮转后的历史日志。
     compress: true

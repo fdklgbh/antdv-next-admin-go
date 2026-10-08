@@ -1,14 +1,16 @@
-module go-gin-template
+module antdv-next-admin-go
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-gormigrate/gormigrate/v2 v2.1.5
 	github.com/go-playground/validator/v10 v10.30.1
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/viper v1.21.0
+	golang.org/x/crypto v0.48.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/driver/postgres v1.6.0
@@ -59,7 +61,6 @@ require (
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.51.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect

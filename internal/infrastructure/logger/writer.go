@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"go-gin-template/internal/config"
+	"antdv-next-admin-go/internal/config"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )

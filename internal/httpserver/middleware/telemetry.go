@@ -8,54 +8,64 @@ import (
 	"runtime/debug"
 	"time"
 
+	"antdv-next-admin-go/internal/infrastructure/logger"
+	"antdv-next-admin-go/internal/shared/contextx"
+	commoncode "antdv-next-admin-go/internal/shared/errcode"
+	apperrors "antdv-next-admin-go/internal/shared/errors"
+	"antdv-next-admin-go/internal/shared/response"
 	"github.com/gin-gonic/gin"
-	"go-gin-template/internal/infrastructure/logger"
-	"go-gin-template/internal/shared/contextx"
-	commoncode "go-gin-template/internal/shared/errcode"
-	apperrors "go-gin-template/internal/shared/errors"
-	"go-gin-template/internal/shared/response"
 )
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
-func RequestID() gin.HandlerFunc {
+func RequestID(log logger.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")
 		if !requestIDPattern.MatchString(requestID) {
 			var err error
 			requestID, err = newRequestID()
 			if err != nil {
-				response.Abort(c, apperrors.New(commoncode.InternalError, http.StatusInternalServerError, "internal server error", err))
+				response.Abort(c, apperrors.New(commoncode.InternalError, http.StatusInternalServerError, "服务器内部错误，请稍后重试", err))
 				return
 			}
 		}
 		c.Set(response.RequestIDKey, requestID)
 		c.Header("X-Request-ID", requestID)
-		c.Request = c.Request.WithContext(contextx.WithRequestID(c.Request.Context(), requestID))
+		ctx := contextx.WithRequestID(c.Request.Context(), requestID)
+		c.Request = c.Request.WithContext(logger.WithLogger(ctx, log))
 		c.Next()
 	}
 }
-func AccessLog(log logger.Logger) gin.HandlerFunc {
+
+func RequestLogger(log logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx := logger.WithLogger(c.Request.Context(), log)
+		c.Request = c.Request.WithContext(ctx)
+		c.Next()
+	}
+}
+
+func AccessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startedAt := time.Now()
 		c.Next()
 		status := c.Writer.Status()
 		fields := []logger.Field{logger.String("method", c.Request.Method), logger.String("route", c.FullPath()), logger.Int("status", status), logger.Int64("latency_ms", time.Since(startedAt).Milliseconds()), logger.String("client_ip", c.ClientIP()), logger.String("user_agent", c.Request.UserAgent())}
 		if status >= 500 {
-			log.Error(c.Request.Context(), "http_request", fields...)
+			logger.FromContext(c.Request.Context()).Error("http_request", fields...)
 		} else if status >= 400 {
-			log.Warn(c.Request.Context(), "http_request", fields...)
+			logger.FromContext(c.Request.Context()).Warn("http_request", fields...)
 		} else {
-			log.Info(c.Request.Context(), "http_request", fields...)
+			logger.FromContext(c.Request.Context()).Info("http_request", fields...)
 		}
 	}
 }
-func Recovery(log logger.Logger) gin.HandlerFunc {
+func Recovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				log.Error(c.Request.Context(), "http_panic", logger.Any("panic", recovered), logger.String("stack", string(debug.Stack())))
-				response.Abort(c, apperrors.New(commoncode.InternalError, http.StatusInternalServerError, "internal server error", nil))
+				logger.FromContext(c.Request.Context()).Error("http_panic", logger.Any("panic", recovered), logger.String("stack", string(debug.Stack())))
+				response.Abort(c, apperrors.New(commoncode.InternalError, http.StatusInternalServerError, "服务器内部错误，请稍后重试", nil))
 			}
 		}()
 		c.Next()

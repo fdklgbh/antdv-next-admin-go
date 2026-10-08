@@ -1,12 +1,11 @@
 package admin
 
 import (
+	"antdv-next-admin-go/internal/httpserver/middleware"
 	"github.com/gin-gonic/gin"
-	"go-gin-template/internal/httpserver/middleware"
-	"go-gin-template/internal/infrastructure/logger"
 )
 
-func (m *Module) RegisterRoutes(router *gin.RouterGroup, authorizer middleware.Authorizer, log logger.Logger) {
-	group := router.Group("/admin", middleware.RequirePermission(authorizer, log))
+func (m *Module) RegisterRoutes(router *gin.RouterGroup, authorizer middleware.Authorizer) {
+	group := router.Group("/admin", middleware.RequirePermission(authorizer))
 	group.GET("/ping", m.Handler.Ping)
 }

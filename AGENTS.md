@@ -1,12 +1,12 @@
 # 项目说明
 
-这是一个基于 Go 1.26 和 Gin 的模块化单体后端模板，集成 MySQL/PostgreSQL、GORM、Redis、YAML 配置、版本化迁移、zerolog、认证、动态权限缓存、统一响应和优雅退出。
+这是一个基于 Go 1.27.0 和 Gin 的模块化单体后端模板，集成 MySQL/PostgreSQL、GORM、Redis、YAML 配置、版本化迁移、zerolog、认证、动态权限缓存、统一响应和优雅退出。
 
 除技术术语、代码标识符、命令、路径、配置项和日志事件名外，沟通、注释及项目文档默认使用中文。
 
 ## 技术栈
 
-- Go 1.26
+- Go 1.27.0
 - Gin 1.12
 - GORM + MySQL 8/PostgreSQL
 - go-redis/v9 + Redis
@@ -47,11 +47,14 @@ internal/shared/                 统一错误、响应、校验、分页和请�
 ## HTTP 约定
 
 - 所有响应统一通过 `internal/shared/response` 输出，结构固定为 `code`、`message`、`data`、`requestId`、`timestamp`；`code` 使用整数业务码并允许业务模块自定义，`timestamp` 使用 Unix 毫秒时间戳。
+- 响应 `message` 统一使用中文，作为前端未知业务码的兜底；成功文案为“操作成功”。多语言由前端按稳定业务码维护，后端不按 `Accept-Language` 翻译，也不通过修改中文文案区分业务类型。
+- 参数无效、资源冲突、受保护资源分别使用 `ValidationFailed`、`ResourceConflict`、`ResourceProtected`；登录凭据错误使用 `authcode.InvalidCredentials`，请求来源被拒使用 `authcode.OriginDenied`，不得混用参数错误或普通权限错误码。新增业务码同步 README，并同步前端四种语言的 `apiErrors.codes` 文案。
 - Handler 和 Middleware 不要直接调用 `c.JSON`、`c.AbortWithStatusJSON` 等方法构造业务响应。
 - 业务码使用五位 `MMNNN` 并显式赋值，成功为 `0`；模块码段及退役码以 README 为准，不使用 `iota` 或复用已分配的码。HTTP 状态码通过 `AppError` 单独指定，不从业务码推导。
 - 通用业务码放在 `internal/shared/errcode`，模块专属码放在 `internal/modules/<module>/errcode`，仅在实际使用时创建。常量不重复模块名或添加 `Code` 前缀，调用处使用 `commoncode`、`authcode` 等导入别名；码包只定义常量，不依赖 HTTP、Service 或 Repository。
 - 调用方直接引用 `commoncode.*` 和对应模块的业务码，需要时分别导入两个码包。模块不得通过常量别名或代码生成重新导出通用码，不使用结构体嵌入、变量或访问方法聚合业务码；新增通用码只更新共享码包及文档，无需同步各模块。
 - 认证信息通过 Gin Context 保存和读取；业务 Service 不接收 Gin Context。
+- 刷新凭据无效或会话不存在返回 HTTP 401 / `authcode.Unauthenticated`；认证依赖故障返回 HTTP 503 / `authcode.ServiceUnavailable`，不得将服务故障伪装为未认证。刷新失败不清除 Cookie。前端仅在明确未认证时退出登录，网络或服务异常应保留登录态。
 - 路由权限必须动态查询 `route_permissions` 和 `user_permissions`，使用 `c.Request.Method` 与 `c.FullPath()` 匹配。
 - 不要在代码中写死权限码与路由的对应关系。没有路由权限配置时默认拒绝访问。
 - 路由级权限由 Middleware 校验，资源归属等数据级权限仍由业务 Service 校验。
@@ -93,6 +96,6 @@ task build
 task check -- <修改的 Go 文件>
 ```
 
-常用命令统一维护在 `Taskfile.yml`，任务说明与提示使用中文，保留技术术语、命令和标识符。启动和迁移默认使用 `configs/config.yaml`，可通过 `CONFIG=配置路径` 覆盖。`task migrate:down` 会回滚最后一个版本，可能删除数据，不属于常规验证步骤。
+常用命令统一维护在 `Taskfile.yml`，任务说明与提示使用中文，保留技术术语、命令和标识符。启动和迁移默认使用 `configs/config.dev.yaml`，可通过 `CONFIG=配置路径` 覆盖。`task migrate:down` 会回滚最后一个版本，可能删除数据，不属于常规验证步骤。
 
 完成 Go 代码修改后，执行 `task check -- <修改的 Go 文件>`，依次运行 `gofmt`、`go test ./...`、`go vet ./...` 和 `go build -ldflags="-s -w" ./...`；也可单独执行各任务。`task build` 默认使用上述链接参数，移除符号表和 DWARF 调试信息。格式化必须显式指定本次修改的文件，不扩大范围。没有 Go Task 时可直接执行等价命令。如果命令无法执行或失败，必须明确说明原因和未验证范围。

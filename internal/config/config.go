@@ -19,6 +19,9 @@ type Config struct {
 func Load(path string) (Config, error) {
 	loader := viper.New()
 	loader.SetConfigFile(path)
+	if err := loader.BindEnv("auth.jwtSecret", "AUTH_JWT_SECRET"); err != nil {
+		return Config{}, fmt.Errorf("bind JWT secret: %w", err)
+	}
 
 	if err := loader.ReadInConfig(); err != nil {
 		return Config{}, fmt.Errorf("read config: %w", err)
