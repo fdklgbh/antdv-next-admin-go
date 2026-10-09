@@ -11,6 +11,6 @@ type Module struct {
 	logger  logger.Logger
 }
 
-func NewModule(db *sql.DB, redisPinger handler.RedisPinger, log logger.Logger) *Module {
-	return &Module{Handler: handler.New(db, redisPinger), logger: log.With(logger.String("module", "health"))}
+func NewModule(db *sql.DB, cachePinger handler.CachePinger, log logger.Logger) *Module {
+	return &Module{Handler: handler.New(db, cachePinger), logger: log.With(logger.String("module", "health"))}
 }

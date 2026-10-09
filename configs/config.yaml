@@ -1,11 +1,11 @@
 # 配置模板，不作为 task run 的默认运行配置。
 # 开发环境使用同目录的 config.dev.yaml（已加入 Git 忽略）。
-# 填写开发配置中的 database.dsn、redis 连接信息和 auth.jwtSecret 后直接执行 task run。
+# 填写开发配置中的 database.dsn 和 auth.jwtSecret 后执行 task run；redis.enabled 默认关闭，使用内存缓存。
 # 配置采用严格校验：未知字段、缺失必填项或无效值会阻止启动，不会静默使用默认值。
 # 时长使用 Go duration 格式，例如 500ms、5s、30m、24h；不支持 7d。
 
 app:
-  # 应用名称，必填，用于日志标识；Redis Key 前缀在 redis.keyPrefix 单独配置。
+  # 应用名称，必填，用于日志标识。
   name: go-gin-template
   # 环境标识，必填，用于日志，例如 local、development、production。
   env: local
@@ -44,9 +44,11 @@ database:
   connectionMaxLifetime: 30m
 
 redis:
-  # Redis Key 前缀，必填；同一 Redis 中的独立应用/环境应使用不同前缀，无需添加末尾冒号。
+  # 默认 false，使用进程内存缓存；开启后使用 Redis，且 Redis 不可用时启动失败，不会自动降级。
+  enabled: false
+  # Redis Key 前缀；仅 enabled 为 true 时必填，同一 Redis 中的独立应用/环境应使用不同前缀。
   keyPrefix: go-gin-template
-  # Redis 地址，必填，格式为 host:port。
+  # Redis 地址；仅 enabled 为 true 时必填，格式为 host:port。
   address: "127.0.0.1:6379"
   # Redis ACL 用户名；未使用 ACL 时留空。
   username: ""
@@ -54,7 +56,7 @@ redis:
   password: ""
   # 数据库索引，必须大于等于 0，且需在服务端支持的索引范围内。
   database: 0
-  # 连接池大小，必须大于 0。
+  # 连接池大小；仅 enabled 为 true 时必填且必须大于 0。
   poolSize: 20
 
 auth:

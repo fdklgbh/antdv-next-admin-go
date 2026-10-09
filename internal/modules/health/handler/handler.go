@@ -13,14 +13,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type RedisPinger interface{ Ping(context.Context) error }
+type CachePinger interface{ Ping(context.Context) error }
 type Handler struct {
-	db    *sql.DB
-	redis RedisPinger
+	db          *sql.DB
+	cachePinger CachePinger
 }
 
-func New(db *sql.DB, redis RedisPinger) *Handler {
-	return &Handler{db: db, redis: redis}
+func New(db *sql.DB, cachePinger CachePinger) *Handler {
+	return &Handler{db: db, cachePinger: cachePinger}
 }
 func (h *Handler) Live(c *gin.Context) { response.Success(c, gin.H{"status": "ok"}) }
 func (h *Handler) Ready(c *gin.Context) {
@@ -29,9 +29,11 @@ func (h *Handler) Ready(c *gin.Context) {
 		h.unavailable(c, "database", err)
 		return
 	}
-	if err := h.redis.Ping(ctx); err != nil {
-		h.unavailable(c, "redis", err)
-		return
+	if h.cachePinger != nil {
+		if err := h.cachePinger.Ping(ctx); err != nil {
+			h.unavailable(c, "cache", err)
+			return
+		}
 	}
 	response.Success(c, gin.H{"status": "ok"})
 }

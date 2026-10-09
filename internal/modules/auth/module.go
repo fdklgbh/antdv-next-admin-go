@@ -19,7 +19,7 @@ type Module struct {
 
 func NewModule(db *gorm.DB, store basecache.Store, log logger.Logger, redisKeyPrefix string, cfg config.Auth) *Module {
 	repo := repository.New(db)
-	cache := authcache.NewRedis(store, func(token string) string { return sessionKey(redisKeyPrefix, token) }, func(userID int64) string { return permissionRoutesKey(redisKeyPrefix, userID) })
+	cache := authcache.NewStoreCache(store, func(token string) string { return sessionKey(redisKeyPrefix, token) }, func(userID int64) string { return permissionRoutesKey(redisKeyPrefix, userID) })
 	authLog := log.With(logger.String("module", "auth"))
 	svc := service.New(repo, cache, cache, cfg)
 	return &Module{Service: svc, handler: handler.New(svc, cfg), logger: authLog}

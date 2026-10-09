@@ -22,6 +22,12 @@ func (s *RedisStore) Get(ctx context.Context, key string) ([]byte, error) {
 	return value, nil
 }
 func (s *RedisStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if ttl < 0 && ttl != KeepTTL {
+		return ErrInvalidTTL
+	}
+	if ttl == KeepTTL {
+		ttl = redis.KeepTTL
+	}
 	if err := s.client.Set(ctx, key, value, ttl).Err(); err != nil {
 		return fmt.Errorf("set redis cache: %w", err)
 	}

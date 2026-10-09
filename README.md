@@ -1,6 +1,6 @@
 # antdv-next-admin-go
 
-基于 Go 1.27.0 和 Gin 的模块化单体服务模板，支持 MySQL/PostgreSQL、GORM、Redis、版本化 Go Migration、动态权限缓存、统一错误响应、zerolog 和优雅退出。
+基于 Go 1.27.0 和 Gin 的模块化单体服务模板，支持 MySQL/PostgreSQL、GORM、内存或 Redis 缓存、版本化 Go Migration、动态权限缓存、统一错误响应、zerolog 和优雅退出。
 
 ## 架构
 
@@ -16,13 +16,28 @@ internal/httpserver        Router 与 Middleware
 internal/shared            错误、响应、校验、分页、请求上下文
 ```
 
-App 手动组装依赖。数据库、Redis 和日志 Writer 各创建一次并按逆序关闭。Gin 只出现在 Router、Middleware 和 Handler；Service 使用 `context.Context`。
+App 手动组装依赖。数据库、选定的缓存后端和日志 Writer 各创建一次并按逆序关闭；只有启用 Redis 时才连接 Redis。Gin 只出现在 Router、Middleware 和 Handler；Service 使用 `context.Context`。
 
-后续项目如需移除 Redis 或改用内存缓存，参见 [Redis 移除与内存缓存切换指南](redis-switching-guide.md)，包含按文件修改步骤、会话处理、迁移和验证清单。
+缓存后端通过 `redis.enabled` 选择：默认关闭并使用内存缓存；设为 `true` 后使用 Redis。完整移除 Redis 的裁剪步骤仍见 [Redis 移除与内存缓存切换指南](redis-switching-guide.md)。
 
 ## 配置与启动
 
-配置使用 Viper `UnmarshalExact` 严格解码并通过 validator 校验。未知字段、缺失值、非法范围、数据库或 Redis 连接失败都会中止启动。
+配置使用 Viper `UnmarshalExact` 严格解码并通过 validator 校验。未知字段、缺失值、非法范围、数据库连接失败，或启用 Redis 时的 Redis 连接失败都会中止启动。
+
+默认使用进程内存缓存，不需要 Redis 服务。需要多实例共享缓存时，在配置中启用 Redis：
+
+```yaml
+redis:
+  enabled: true
+  keyPrefix: my-service
+  address: "127.0.0.1:6379"
+  username: ""
+  password: ""
+  database: 0
+  poolSize: 20
+```
+
+Redis 启用后连接失败会中止启动，不会静默切换为内存缓存。内存缓存仅在当前进程内共享，服务重启会清空 refresh session；多实例部署应启用 Redis。
 
 关系型数据库由 `database.driver` 选择：
 
@@ -64,11 +79,11 @@ GET /api/me
 GET /api/admin/ping
 ```
 
-所有 JSON 响应包含 `code`、`message`、`data`、`requestId` 和 Unix 毫秒 `timestamp`。认证使用 `Authorization: Bearer <Access JWT>`，JWT 固定有效 15 分钟，校验 HS256 签名、issuer、audience 和有效期，不查询撤销状态。Redis Key 前缀由 `redis.keyPrefix` 单独配置，与 `app.name` 无关；刷新会话 Key 为 `<keyPrefix>:auth:refresh:<refresh_token_sha256>`。
+所有 JSON 响应包含 `code`、`message`、`data`、`requestId` 和 Unix 毫秒 `timestamp`。认证使用 `Authorization: Bearer <Access JWT>`，JWT 固定有效 15 分钟，校验 HS256 签名、issuer、audience 和有效期，不查询撤销状态。启用 Redis 时，Key 前缀由 `redis.keyPrefix` 配置，与 `app.name` 无关；刷新会话 Key 为 `<keyPrefix>:auth:refresh:<refresh_token_sha256>`。内存模式不使用 Redis 前缀。
 
-权限使用 HTTP Method 与 Gin 路由模板动态匹配。Auth Service 先读取 `<keyPrefix>:auth:permission_routes:<user_id>`；只有 `cache.ErrMiss` 才查询数据库并回填，Redis 错误和损坏数据会返回 503。空权限集合也缓存。权限写操作提交数据库事务后删除所有受影响用户缓存；删除失败会返回明确错误，短 TTL 是最终一致性的安全边界。
+权限使用 HTTP Method 与 Gin 路由模板动态匹配。Auth Service 先读取 `<keyPrefix>:auth:permission_routes:<user_id>`；只有 `cache.ErrMiss` 才查询数据库并回填，缓存后端错误和损坏数据会返回 503。空权限集合也缓存。权限写操作提交数据库事务后删除所有受影响用户缓存；删除失败会返回明确错误，短 TTL 是最终一致性的安全边界。
 
-路由映射变更和删除权限码会在同一数据库事务中保存待失效用户，Redis 删除成功后再清理对应记录。失败或进程中断后，重复调用同一路由或权限码的操作可继续处理遗留记录；没有后台重试任务，未重试的记录会保留。此机制不消除并发回填旧缓存的窗口。
+路由映射变更和删除权限码会在同一数据库事务中保存待失效用户，缓存删除成功后再清理对应记录。失败或进程中断后，重复调用同一路由或权限码的操作可继续处理遗留记录；没有后台重试任务，未重试的记录会保留。此机制不消除并发回填旧缓存的窗口。
 
 所有权限写事务使用 Read Committed，并先锁定 `permission_write_locks` 的 `id=1` 记录，再读取最新权限关系和采集受影响用户。这会在数据库中串行化各实例的权限写入，避免并发路由修改或授权与删除交错时漏掉用户。锁在提交或回滚时释放；权限查询与提交后的缓存删除不持有该锁。
 
@@ -202,9 +217,9 @@ task check -- internal/shared/response/response.go internal/httpserver/router.go
 
 登录请求：`{ "username": "...", "password": "...", "remember": true, "rememberDays": 7 }`。勾选记住登录时仅允许 7/15/30 天；未勾选时省略 rememberDays。登录和刷新成功的 data 为 `{ "token": "Access JWT", "expiresIn": 900, "sessionId": "非秘密会话标识", "remember": true }`。
 
-Refresh Token 是随机字符串，仅通过 HttpOnly、SameSite=Lax、Path=/api/auth 的 Cookie 下发，Redis Key 只包含其 SHA-256。未记住登录使用会话 Cookie，服务端最长 24 小时；记住登录按所选天数设置 Cookie 和 Redis 有效期。期限从登录时计算，刷新不更新 Cookie、不轮换凭证、不延长会话，不实现原子轮换或重复刷新窗口。多标签页可同时使用固定刷新凭证获取各自的新 JWT。
+Refresh Token 是随机字符串，仅通过 HttpOnly、SameSite=Lax、Path=/api/auth 的 Cookie 下发，缓存 Key 只包含其 SHA-256。未记住登录使用会话 Cookie，服务端最长 24 小时；记住登录按所选天数设置 Cookie 和缓存有效期。期限从登录时计算，刷新不更新 Cookie、不轮换凭证、不延长会话，不实现原子轮换或重复刷新窗口。多标签页可同时使用固定刷新凭证获取各自的新 JWT。内存模式下 refresh session 随进程退出丢失，因此重启后用户需重新登录。
 
-退出成功后删除刷新会话并清除 Cookie；重复退出成功，Redis 故障则明确返回 503，不伪造撤销成功。已签发的 JWT 在 15 分钟内仍可能有效，包括并发退出时已经开始签发的 JWT。后续项目可自行增加即时撤销、Token 轮换、登录限流和角色管理接口。
+退出成功后删除刷新会话并清除 Cookie；重复退出成功，启用 Redis 时 Redis 故障会明确返回 503，不伪造撤销成功。已签发的 JWT 在 15 分钟内仍可能有效，包括并发退出时已经开始签发的 JWT。后续项目可自行增加即时撤销、Token 轮换、登录限流和角色管理接口。
 
 登录凭据错误使用 HTTP 401 / code 20004，其他认证失败使用 HTTP 401 / code 20001，权限错误为 HTTP 403 / code 20002，认证依赖故障为 HTTP 503 / code 20003，参数错误为 HTTP 400 / code 10001。刷新失败不清除 Cookie，避免旧请求的失败覆盖其他标签页新登录的 Cookie。
 

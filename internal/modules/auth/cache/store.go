@@ -11,20 +11,22 @@ import (
 	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
-type Redis struct {
+type StoreCache struct {
 	store         basecache.Store
 	sessionKey    func(string) string
 	permissionKey func(int64) string
 }
+
 type permissionPayload struct {
 	SchemaVersion int      `json:"schemaVersion"`
 	Routes        []string `json:"routes"`
 }
 
-func NewRedis(store basecache.Store, sessionKey func(string) string, permissionKey func(int64) string) *Redis {
-	return &Redis{store: store, sessionKey: sessionKey, permissionKey: permissionKey}
+func NewStoreCache(store basecache.Store, sessionKey func(string) string, permissionKey func(int64) string) *StoreCache {
+	return &StoreCache{store: store, sessionKey: sessionKey, permissionKey: permissionKey}
 }
-func (c *Redis) GetRefresh(ctx context.Context, token string) (model.RefreshSession, error) {
+
+func (c *StoreCache) GetRefresh(ctx context.Context, token string) (model.RefreshSession, error) {
 	var session model.RefreshSession
 	payload, err := c.store.Get(ctx, c.sessionKey(token))
 	if err != nil {
@@ -38,17 +40,20 @@ func (c *Redis) GetRefresh(ctx context.Context, token string) (model.RefreshSess
 	}
 	return session, nil
 }
-func (c *Redis) SetRefresh(ctx context.Context, token string, session model.RefreshSession, ttl time.Duration) error {
+
+func (c *StoreCache) SetRefresh(ctx context.Context, token string, session model.RefreshSession, ttl time.Duration) error {
 	payload, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("encode refresh session: %w", err)
 	}
 	return c.store.Set(ctx, c.sessionKey(token), payload, ttl)
 }
-func (c *Redis) DeleteRefresh(ctx context.Context, token string) error {
+
+func (c *StoreCache) DeleteRefresh(ctx context.Context, token string) error {
 	return c.store.Delete(ctx, c.sessionKey(token))
 }
-func (c *Redis) GetRoutes(ctx context.Context, userID int64) ([]model.Route, error) {
+
+func (c *StoreCache) GetRoutes(ctx context.Context, userID int64) ([]model.Route, error) {
 	payload, err := c.store.Get(ctx, c.permissionKey(userID))
 	if err != nil {
 		return nil, err
@@ -70,7 +75,8 @@ func (c *Redis) GetRoutes(ctx context.Context, userID int64) ([]model.Route, err
 	}
 	return routes, nil
 }
-func (c *Redis) SetRoutes(ctx context.Context, userID int64, routes []model.Route, ttl time.Duration) error {
+
+func (c *StoreCache) SetRoutes(ctx context.Context, userID int64, routes []model.Route, ttl time.Duration) error {
 	if routes == nil {
 		routes = []model.Route{}
 	}
@@ -84,7 +90,8 @@ func (c *Redis) SetRoutes(ctx context.Context, userID int64, routes []model.Rout
 	}
 	return c.store.Set(ctx, c.permissionKey(userID), payload, ttl)
 }
-func (c *Redis) DeleteUsers(ctx context.Context, userIDs ...int64) error {
+
+func (c *StoreCache) DeleteUsers(ctx context.Context, userIDs ...int64) error {
 	const batchSize = 500
 	for start := 0; start < len(userIDs); start += batchSize {
 		end := min(start+batchSize, len(userIDs))

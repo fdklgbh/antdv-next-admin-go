@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/mileusna/useragent"
 	"io"
 	"mime"
 	"net/http"
@@ -191,12 +192,36 @@ func (h *Handler) Audit() gin.HandlerFunc {
 			state = "fail"
 		}
 		module := strings.Split(strings.TrimPrefix(route, "/api/"), "/")[0]
+		browser, os := "", ""
+		if kind == "login" {
+			browser, os = parseClientAgent(c.Request.UserAgent())
+		}
 		// 只记录账号、路径模板和结果，绝不记录请求体、Token、密码或查询参数。
-		row := model.Log{Kind: kind, Username: username, Module: module, Action: action, Description: route, Method: c.Request.Method, URL: route, IP: c.ClientIP(), Status: state, Message: fmt.Sprintf("HTTP %d", c.Writer.Status()), Duration: time.Since(started).Milliseconds()}
+		row := model.Log{Kind: kind, Username: username, Module: module, Action: action, Description: route, Method: c.Request.Method, URL: route, IP: c.ClientIP(), Browser: browser, OS: os, Status: state, Message: fmt.Sprintf("HTTP %d", c.Writer.Status()), Duration: time.Since(started).Milliseconds()}
 		if err := h.service.Audit(c.Request.Context(), row); err != nil {
 			logger.FromContext(c.Request.Context()).Error("audit_persist_failed", logger.Err(err))
 		}
 	}
+}
+
+func parseClientAgent(value string) (string, string) {
+	const maxUserAgentLength = 1024
+	if value == "" || len(value) > maxUserAgentLength {
+		return "", ""
+	}
+	parsed := useragent.Parse(value)
+	browser := ""
+	if parsed.Name != "" && parsed.Name != parsed.String {
+		browser = parsed.Name
+		if version := parsed.VersionNoShort(); version != "" {
+			browser += " " + version
+		}
+	}
+	operatingSystem := parsed.OS
+	if version := parsed.OSVersionNoShort(); version != "" {
+		operatingSystem += " " + version
+	}
+	return browser, operatingSystem
 }
 
 func (h *Handler) EnabledDictionaries(c *gin.Context) {

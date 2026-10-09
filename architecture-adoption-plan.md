@@ -12,8 +12,8 @@
 
 1. 将业务代码完整迁移到 `internal/modules`，按模块组织 Handler、Service、Repository、Cache、DTO 和 Model。
 2. 支持 MySQL 和 PostgreSQL，由配置选择一个关系型数据库驱动。
-3. Redis 作为独立基础设施，继续承担登录会话和权限缓存，不作为关系型数据库的替代选项。
-4. 权限查询采用 Cache-Aside：先查询 Redis，缓存未命中时查询数据库并回填。
+3. Redis 作为可选独立基础设施，继续承担登录会话和权限缓存，不作为关系型数据库的替代选项；默认使用进程内存 Cache Store。
+4. 权限查询采用 Cache-Aside：先查询选定的 Cache Store，缓存未命中时查询数据库并回填。
 5. 权限变化后删除所有受影响用户的权限缓存 Key。
 6. 建立通用 Cache Store，同时保留各模块自己的业务 Cache 接口、Key 和序列化结构。
 7. 使用 Gormigrate 维护版本化 Go Migration；具体项目选定数据库后只维护一条迁移历史。
@@ -30,7 +30,7 @@
 - 同时实现 slog、zap 等其他日志后端。
 - 在 API 启动时直接对当前业务 Model 执行 GORM `AutoMigrate`。
 - 为每个类或每个文件机械创建接口。
-- 将本地内存缓存作为 Redis 故障时的静默降级。
+- Redis 故障时静默切换到本地缓存；后端由配置显式选择，不做运行时故障降级。
 - 为数据库方言差异编写 SQL 字符串替换器。
 - 在普通应用日志 Hook 中同步写入审计表。
 
@@ -43,7 +43,7 @@
 顶层 App 只负责：
 
 - 初始化配置和日志。
-- 初始化数据库、Redis 和通用 Cache Store。
+- 初始化数据库和通用 Cache Store；默认创建内存 Store，仅在 `redis.enabled` 时连接 Redis。
 - 构造各业务模块。
 - 注册模块路由。
 - 管理 HTTP Server 和后台组件生命周期。
@@ -57,9 +57,9 @@ MySQL 和 PostgreSQL 是互斥的关系型数据库选项：
 database.driver = mysql | postgres
 ```
 
-Redis 是独立且必需的基础设施。只要启用当前认证模块，Redis 就必须可用，因为登录会话和权限缓存都依赖 Redis。
+Redis 是可选基础设施。默认使用当前进程内的内存 Store；设置 `redis.enabled: true` 后，登录会话和权限缓存改用 Redis。
 
-Redis 连接异常不能伪装成缓存未命中，也不能静默回退成本地缓存。
+Redis 启用后连接异常不能伪装成缓存未命中，也不能静默回退到本地缓存。内存 Store 不跨进程共享，进程重启会清空登录会话；多实例部署应启用 Redis。
 
 ### 4.3 抽象原则
 
@@ -185,7 +185,7 @@ Module Service
        ↓
 Infrastructure
   ├── GORM → MySQL/PostgreSQL
-  └── Cache Store → Redis
+  └── Cache Store → Memory (default) / Redis (optional)
 ```
 
 必须遵守：
@@ -225,6 +225,7 @@ database:
   connectionMaxLifetime: 30m
 
 redis:
+  enabled: false
   address: "127.0.0.1:6379"
   username: ""
   password: ""
@@ -425,7 +426,7 @@ Redis 实现负责：
 
 ### 10.2 模块 Cache
 
-每个模块在自己的 `cache` 目录定义业务接口和 Redis Adapter。例如 Auth：
+每个模块在自己的 `cache` 目录定义业务接口和通用 Store Adapter。例如 Auth：
 
 ```go
 type PermissionCache interface {
@@ -437,7 +438,7 @@ type PermissionCache interface {
 
 模块 Cache 负责：
 
-- 构造模块 Redis Key。
+- 构造模块缓存 Key。
 - 序列化和反序列化。
 - 校验缓存数据结构。
 - 将通用 `cache.ErrMiss` 传播给 Service。
@@ -483,7 +484,7 @@ type PermissionCache interface {
 5. 返回权限判断结果
 ```
 
-只有 `cache.ErrMiss` 可以触发数据库回源。Redis 连接错误、超时、权限错误和缓存数据损坏必须返回错误，由 HTTP 边界转换为 503，并记录一次完整错误。
+只有 `cache.ErrMiss` 可以触发数据库回源。选定缓存后端的连接错误、超时、权限错误和缓存数据损坏必须返回错误，由 HTTP 边界转换为 503，并记录一次完整错误。
 
 数据库回源查询：
 
@@ -533,8 +534,8 @@ Repository 使用 GORM 构造查询，保持 MySQL 和 PostgreSQL 兼容。
 要求：
 
 - 权限写操作设计为幂等，便于缓存删除失败后安全重试请求。
-- 授权、撤权、路由映射变更和删除权限码共用 `permission_write_locks` 中 `id=1` 的数据库行锁。每个写事务使用 Read Committed，并在读取权限关系或执行修改前通过 `SELECT ... FOR UPDATE` 取得锁，直到提交或回滚才释放；锁记录由版本化迁移创建，缺失时必须报错。模板串行化权限写入以保证跨实例采集受影响用户的一致性，权限查询及提交后的 Redis 删除不持有该锁。
-- 路由映射变更和删除权限码时，将受影响用户写入 `permission_cache_invalidations`，与权限修改在同一事务提交。按操作及资源标识读取待失效记录，删除 Redis 缓存成功后仅清理本批记录；重复调用同一路由或权限码的操作时继续处理遗留记录，避免修改后的权限表丢失原受影响用户。
+- 授权、撤权、路由映射变更和删除权限码共用 `permission_write_locks` 中 `id=1` 的数据库行锁。每个写事务使用 Read Committed，并在读取权限关系或执行修改前通过 `SELECT ... FOR UPDATE` 取得锁，直到提交或回滚才释放；锁记录由版本化迁移创建，缺失时必须报错。模板串行化权限写入以保证跨实例采集受影响用户的一致性，权限查询及提交后的缓存删除不持有该锁。
+- 路由映射变更和删除权限码时，将受影响用户写入 `permission_cache_invalidations`，与权限修改在同一事务提交。按操作及资源标识读取待失效记录，选定的缓存 Store 删除成功后仅清理本批记录；重复调用同一路由或权限码的操作时继续处理遗留记录，避免修改后的权限表丢失原受影响用户。
 - DB 提交成功但缓存删除失败时，不得宣称完整成功；必须返回明确错误并记录受影响用户和操作。
 - 禁止业务代码或管理后台绕过 Service 直接修改权限表。
 - 运维直接修改权限表时，必须同时执行对应缓存失效命令。
@@ -542,7 +543,7 @@ Repository 使用 GORM 构造查询，保持 MySQL 和 PostgreSQL 兼容。
 
 ### 11.4 一致性说明
 
-数据库与 Redis 之间没有原子事务。提交后删除缓存属于最终一致性，存在并发缓存回填旧数据的短窗口。
+数据库与选定的缓存后端之间没有原子事务。提交后删除缓存属于最终一致性，存在并发缓存回填旧数据的短窗口。
 
 基础实现采用：
 
@@ -552,7 +553,7 @@ Repository 使用 GORM 构造查询，保持 MySQL 和 PostgreSQL 兼容。
 - 缓存删除失败明确报错。
 - 所有权限写操作保持幂等。
 
-如果项目要求撤权严格实时生效，应在后续增加可靠失效机制，例如事务 Outbox 和失效 Worker；不能声称普通 Cache-Aside 已实现跨数据库与 Redis 的强一致性。
+如果项目要求撤权严格实时生效，应在后续增加可靠失效机制，例如事务 Outbox 和失效 Worker；不能声称普通 Cache-Aside 已实现跨数据库与缓存后端的强一致性。
 
 ## 12. Module 设计
 
@@ -572,7 +573,7 @@ func NewModule(
 	cfg config.Auth,
 ) *Module {
 	repo := repository.New(db)
-	permissionCache := authcache.NewRedis(cacheStore)
+	permissionCache := authcache.NewStoreCache(cacheStore)
 	svc := service.New(repo, permissionCache, logger, cfg.PermissionCacheTTL)
 	return &Module{Handler: handler.New(svc)}
 }
@@ -787,7 +788,7 @@ Zerolog Adapter
 ### 阶段五：权限缓存
 
 - Repository 查询用户完整权限路由集合。
-- Redis PermissionCache 实现 Cache-Aside。
+- PermissionCache 通过选定的 Cache Store 实现 Cache-Aside。
 - 权限写操作集中到 Service。
 - 用户权限及路由权限变化后删除受影响缓存。
 - 补齐缓存异常、空权限和缓存数据损坏的错误处理。
@@ -822,7 +823,7 @@ Zerolog Adapter
 
 - 缓存命中时不访问权限数据库。
 - 缓存未命中时查询数据库并回填，包括空权限集合。
-- Redis 非 Miss 错误不会被当作数据库回源条件。
+- Cache Store 的非 Miss 错误不会被当作数据库回源条件。
 - 用户权限变化会删除对应用户缓存。
 - 路由权限变化会删除所有受影响用户缓存。
 - 无路由权限配置时仍然默认拒绝访问。

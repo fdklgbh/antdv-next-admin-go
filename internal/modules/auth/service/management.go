@@ -226,10 +226,8 @@ func (s *Service) SavePermission(ctx context.Context, id string, p dto.Permissio
 		if json.Unmarshal(p.Name, &localized) != nil || len(localized) == 0 {
 			return p, model.ErrInvalid
 		}
-		for _, v := range localized {
-			if strings.TrimSpace(v) == "" {
-				return p, model.ErrInvalid
-			}
+		if strings.TrimSpace(localized["zh-CN"]) == "" {
+			return p, model.ErrInvalid
 		}
 	} else if strings.TrimSpace(name) == "" {
 		return p, model.ErrInvalid

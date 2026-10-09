@@ -11,7 +11,7 @@ type Config struct {
 	App      App      `mapstructure:"app" validate:"required"`
 	Server   Server   `mapstructure:"server" validate:"required"`
 	Database Database `mapstructure:"database" validate:"required"`
-	Redis    Redis    `mapstructure:"redis" validate:"required"`
+	Redis    Redis    `mapstructure:"redis"`
 	Auth     Auth     `mapstructure:"auth" validate:"required"`
 	Log      Log      `mapstructure:"log" validate:"required"`
 }

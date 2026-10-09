@@ -1,6 +1,6 @@
 # 项目说明
 
-这是一个基于 Go 1.27.0 和 Gin 的模块化单体后端模板，集成 MySQL/PostgreSQL、GORM、Redis、YAML 配置、版本化迁移、zerolog、认证、动态权限缓存、统一响应和优雅退出。
+这是一个基于 Go 1.27.0 和 Gin 的模块化单体后端模板，集成 MySQL/PostgreSQL、GORM、内存或 Redis 缓存、YAML 配置、版本化迁移、zerolog、认证、动态权限缓存、统一响应和优雅退出。
 
 除技术术语、代码标识符、命令、路径、配置项和日志事件名外，沟通、注释及项目文档默认使用中文。
 
@@ -35,13 +35,13 @@ internal/shared/                 统一错误、响应、校验、分页和请�
 ## 架构约定
 
 - 在 `internal/app/app.go` 中使用构造函数手动组装依赖。除非项目复杂度明显增加且用户明确要求，否则不要引入 Wire 或其他依赖注入框架。
-- DB 和 Redis Client 在应用启动时各创建一次，通过 Service 或明确的构造参数复用，不要在 Handler 或 Middleware 中重复创建连接。
+- DB Client 在应用启动时创建一次。Redis 仅在 `redis.enabled` 时创建；未启用时使用进程内存 Cache Store。外部客户端通过 Service 或明确的构造参数复用，不要在 Handler 或 Middleware 中重复创建连接。
 - 数据库 Driver 选择仅位于 `internal/infrastructure/database`；业务模块不得按方言分支。
-- 每个业务模块在本模块的 `redis_key.go` 中集中定义 Redis Key 前缀和构造函数，不要在 Service、Handler 或 Middleware 中散落 Key 字面量。
+- 每个业务模块在本模块的 `redis_key.go` 中集中定义缓存 Key 前缀和构造函数，不要在 Service、Handler 或 Middleware 中散落 Key 字面量。
 - Middleware 需要认证或权限能力时依赖 `auth.Service`，不要直接堆叠 DB、Redis Client 等底层依赖。
 - Service 接收 `context.Context`，不要依赖 `*gin.Context`。
 - 只有存在多个实现、需要替换实现或便于隔离外部系统时才提取 interface；不要为单一实现预先设计 interface。
-- 配置由 `internal/config` 使用 Viper 统一加载并严格解码，字段必填、枚举、范围及跨字段约束统一通过 `validator/v10` 标签定义，不要编写字段级 `if` 或 `switch` 校验。YAML 未知字段、必要配置缺失、配置值不符合约束或依赖连接失败时直接返回错误，不要静默降级。
+- 配置由 `internal/config` 使用 Viper 统一加载并严格解码，字段必填、枚举、范围及跨字段约束统一通过 `validator/v10` 标签定义，不要编写字段级 `if` 或 `switch` 校验。YAML 未知字段、必要配置缺失、配置值不符合约束、数据库连接失败或启用 Redis 后连接失败时直接返回错误，不要静默降级。
 - 不要增加未明确要求的兜底逻辑、兼容分支、缓存或重试。
 
 ## HTTP 约定
@@ -58,7 +58,7 @@ internal/shared/                 统一错误、响应、校验、分页和请�
 - 路由权限必须动态查询 `route_permissions` 和 `user_permissions`，使用 `c.Request.Method` 与 `c.FullPath()` 匹配。
 - 不要在代码中写死权限码与路由的对应关系。没有路由权限配置时默认拒绝访问。
 - 路由级权限由 Middleware 校验，资源归属等数据级权限仍由业务 Service 校验。
-- Redis 负责登录会话和权限 Cache-Aside。只有 `cache.ErrMiss` 才能回源数据库；权限变化必须在事务提交后删除所有受影响用户的缓存 Key。
+- 选定的 Cache Store 负责登录会话和权限 Cache-Aside；默认使用进程内存，`redis.enabled` 时使用 Redis。只有 `cache.ErrMiss` 才能回源数据库；权限变化必须在事务提交后删除所有受影响用户的缓存 Key。Redis 启用后故障不得静默回退到内存。
 
 ## 日志约定
 

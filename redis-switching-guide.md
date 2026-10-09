@@ -1,8 +1,8 @@
 # Redis 移除与内存缓存切换指南
 
-本文供基于本模板创建的后续项目裁剪基础设施使用，覆盖完全移除 Redis，以及将 Redis 改为进程内缓存两条路径。
+本文供基于本模板创建的后续项目裁剪基础设施使用，覆盖完全移除 Redis，以及将项目固定为进程内缓存两条路径。当前模板已支持运行时选择内存或 Redis 缓存，日常切换请使用 `redis.enabled`，无需执行本文的裁剪步骤。
 
-**当前代码仍使用 Redis，没有 `cache.driver` 或 `redis.enabled` 开关，也尚未实现内存 Store、数据库会话或登录签发接口。** 下文新增类型、文件及接口均为后续修改建议，不表示现有功能。只修改 YAML 无法完成切换。
+默认 `redis.enabled: false` 使用进程内存 Store；设为 `true` 时连接 Redis。启用 Redis 后连接失败会中止启动，不会静默降级。内存 Store 有 100,000 条目上限，进程重启会清空 refresh session，不适合多实例共享会话。
 
 ## 1. 先选择目标方案
 
@@ -21,17 +21,17 @@
 
 | 文件 | 当前作用 | 切换时需要处理的内容 |
 |---|---|---|
-| [internal/config/config.go](internal/config/config.go) | 严格配置入口 | `Config.Redis`、`Config.Auth` 的必填约束 |
-| [internal/config/redis.go](internal/config/redis.go) | Redis 连接配置 | 移除不用的配置类型 |
+| [internal/config/config.go](internal/config/config.go) | 严格配置入口 | `redis.enabled` 控制 Redis 配置的条件校验 |
+| [internal/config/redis.go](internal/config/redis.go) | Redis 连接配置 | Redis 未启用时连接参数可留空 |
 | [internal/config/auth.go](internal/config/auth.go) | 权限缓存 TTL | 无缓存时移除；内存缓存时保留 |
 | [configs/config.yaml](configs/config.yaml) | 配置示例 | 同步移除 Redis 段，按方案处理 Auth 段 |
-| [internal/app/dependencies.go](internal/app/dependencies.go) | 连接与模块组装 | Redis 创建、关闭、`redisPinger`、Store 注入 |
+| [internal/app/dependencies.go](internal/app/dependencies.go) | 连接与模块组装 | 默认创建内存 Store；按开关创建并关闭 Redis Client |
 | [internal/infrastructure/redis/client.go](internal/infrastructure/redis/client.go) | Redis Client | 无调用方后删除 |
 | [internal/infrastructure/cache/store.go](internal/infrastructure/cache/store.go) | 通用字节 Store 接口 | 内存方案复用；彻底无缓存时评估删除 |
-| [internal/infrastructure/cache/redis.go](internal/infrastructure/cache/redis.go) | Redis Store | 替换成内存 Store 或移除 |
+| [internal/infrastructure/cache/redis.go](internal/infrastructure/cache/redis.go) | Redis Store | 保留为可选实现；内存实现位于 `memory.go` |
 | [internal/modules/auth/module.go](internal/modules/auth/module.go) | Auth 组装 | 分别注入会话存储与权限缓存 |
 | [internal/modules/auth/cache/cache.go](internal/modules/auth/cache/cache.go) | 会话与权限缓存接口 | 按新会话方案调整接口和错误契约 |
-| [internal/modules/auth/cache/redis.go](internal/modules/auth/cache/redis.go) | JSON 编解码、Schema 校验和批量删除 | 内存方案可复用；无缓存方案拆除权限缓存部分 |
+| [internal/modules/auth/cache/store.go](internal/modules/auth/cache/store.go) | 通用 Store 上的 JSON 编解码、Schema 校验和批量删除 | 内存和 Redis 方案共用；无缓存方案拆除权限缓存部分 |
 | [internal/modules/auth/redis_key.go](internal/modules/auth/redis_key.go) | Token 摘要与 Key 构造 | 内存方案可保留 Key 格式；数据库会话仍需要 Token 摘要 |
 | [internal/modules/auth/service/service.go](internal/modules/auth/service/service.go) | 认证、权限判断和失效处理 | 无缓存时直接查库；内存时保留权限 Cache-Aside |
 | [internal/modules/auth/repository/repository.go](internal/modules/auth/repository/repository.go) | 权限读写、待失效记录 | 无缓存时移除失效记录写入、读取和确认 |
@@ -41,11 +41,11 @@
 | [internal/modules/health/handler/handler.go](internal/modules/health/handler/handler.go) | Readiness 检查 | 删除 Redis 字段、接口及 Ping |
 | [migrations/v000001_init_schema.go](migrations/v000001_init_schema.go) | 模板初始 Schema | 按项目是否已发布选择重建初始迁移或追加版本 |
 
-Auth 的 `cache.Redis` 虽然名字包含 Redis，实际仅依赖通用 `cache.Store`，不调用 Redis Client。这是内存替换可复用的边界。
+Auth 的 `cache.StoreCache` 依赖通用 `cache.Store`，不调用 Redis Client；内存与 Redis 共用同一业务缓存适配器。
 
 ## 3. 共同准备：明确会话从哪里来
 
-当前 `SessionCache` 只有 `GetPrincipal(context.Context, string)`，`auth.RegisterRoutes` 没有注册登录接口。模板只消费会话，不负责校验用户凭据、生成 Token 或创建会话。选择存储后，后续项目需要补齐自己的登录和退出流程。
+当前模板已有登录、刷新和退出流程；refresh session 存在选定的 Cache Store 中，用户认证与权限数据仍来自数据库。内存模式下 session 仅在当前进程内有效；需要持久化会话的后续项目可按方案 A/B 改为数据库会话。
 
 ### 3.1 数据库会话：方案 A、B
 
@@ -67,7 +67,7 @@ Auth 的 `cache.Redis` 虽然名字包含 Redis，实际仅依赖通用 `cache.S
 
 由当前服务的登录流程把 Principal 写入同一个进程内 Store，并设置会话 TTL；退出时删除会话 Key。当前 `SessionCache` 没有写入和删除方法，需要在模块内补充相应契约，禁止让 Handler 直接拼接 Key 或操作 Store。
 
-不能继续让独立程序、Redis CLI 或另一个服务进程写会话：它们无法写入本进程的内存。会话被容量策略淘汰或进程重启时，下一次请求返回 401，用户需要重新登录。若不能接受这一行为，选择数据库会话。
+不能继续让独立程序、Redis CLI 或另一个服务进程写会话：它们无法写入本进程的内存。进程重启会清空已有会话，用户需要重新登录；达到容量上限时，新会话写入返回 `cache.ErrFull`，不会淘汰仍有效的会话。若不能接受内存会话的生命周期限制，选择数据库会话。
 
 ## 4. 方案 A：完全移除 Redis，权限每次查库
 
@@ -78,8 +78,8 @@ Auth 的 `cache.Redis` 虽然名字包含 Redis，实际仅依赖通用 `cache.S
 1. 按 §3.1 实现数据库会话，并调整 Auth 构造函数，移除通用 Store 参数。
 2. 从 `Config` 和 YAML 同时移除 Redis 配置；`UnmarshalExact` 会拒绝残留的 `redis:` 字段，不要改成宽松解码。
 3. 删除 `permissionCacheTTL` 字段。如果 `Auth` 已没有其他配置，同步移除 `Config.Auth`、对应类型和 YAML 的整个 `auth:` 段；若新增了会话配置则保留所需部分，并通过 validator 标签验证。
-4. 在 `buildDependencies` 移除 Redis Client 的创建、关闭函数、`redisPinger`、`NewRedisStore` 调用及相关 import。保留数据库与日志的生命周期管理。
-5. 修改 Health 的 Module 和 Handler 构造函数，移除 `RedisPinger` 依赖与 `Ready` 中的 Redis Ping。保持数据库检查和 `/health/live`、`/health/ready` 路由。
+4. 在 `buildDependencies` 移除 Redis Client 的创建、关闭函数、`redisCachePinger`、`NewRedisStore` 调用及相关 import。保留数据库与日志的生命周期管理。
+5. 修改 Health 的 Module 和 Handler 构造函数，移除 `CachePinger` 依赖与 `Ready` 中的缓存 Ping。保持数据库检查和 `/health/live`、`/health/ready` 路由。
 
 不要向旧构造函数传 `nil`，也不要提供一个永远成功的 Pinger 来跳过检查；应直接调整类型和调用方。
 
@@ -114,7 +114,7 @@ Auth 的 `cache.Redis` 虽然名字包含 Redis，实际仅依赖通用 `cache.S
 
 ### 5.1 实现通用内存 Store
 
-建议新增 `internal/infrastructure/cache/memory.go`，实现现有接口：
+当前实现位于 `internal/infrastructure/cache/memory.go`，实现现有接口：
 
 ```go
 type Store interface {
@@ -124,16 +124,16 @@ type Store interface {
 }
 ```
 
-可使用 Go 标准库中的 `map`、`sync.Mutex` 和 `time`，不必为单实例缓存新增依赖。每项保存值和过期时间，实现时明确以下契约：
+实现使用 Go 标准库中的 `map`、`sync.Mutex` 和 `time`，每项保存值和过期时间，明确以下契约：
 
 | 行为 | 要求 |
 |---|---|
 | 并发读写 | 所有共享状态受锁保护；过期检查与删除在同一临界区完成，避免删掉并发写入的新值 |
 | 到期判断 | `now >= expiresAt` 即过期，读取立即返回 `cache.ErrMiss`，不能等定时清理才生效 |
 | 未命中 | 不存在、已过期或已淘汰返回 `cache.ErrMiss` |
-| TTL | 本项目权限与会话均要求正 TTL；对零值、负值明确报错，不允许意外永久有效 |
+| TTL | 通用 Store 中 `0` 表示不过期，`cache.KeepTTL` 表示保留已有到期时间（Key 不存在或已过期时不过期），正值表示有效期，其他负值报错；本项目权限与会话仍使用正 TTL |
 | 数据所有权 | 写入和读取都复制 `[]byte`，调用方不能修改缓存持有的数据 |
-| 容量 | 设定最大条目数和单值大小或总字节预算，并验证为正值；先清理过期项，再按明确策略淘汰或返回容量错误 |
+| 容量 | 最多 100,000 个条目；新增条目达到上限时先清理过期项，仍满则返回 `cache.ErrFull`，不静默淘汰有效 session |
 | 删除 | 支持批量删除；Key 不存在时删除仍成功 |
 | Context | 传播已经取消或超时的 Context 错误，不能转换成 Miss |
 | 清理 | 可用读取时过期删除加写入时清理和容量控制；如采用定时清理，需要可停止的生命周期 |
@@ -141,13 +141,13 @@ type Store interface {
 
 优先选择简单、可说明的容量策略。若拒绝写入导致权限缓存回填失败，现有 Service 会返回错误并由 HTTP 边界输出 503；不要忽略写入错误并假装已缓存。会话也使用内存时，容量策略直接决定是否可能提前退出登录，需要明确记录。
 
-容量值可由构造函数明确传入，或在后续项目新增内存缓存配置并使用 validator 标签校验。本文不要求同时维护 Redis/Memory 两套运行时开关；只保留项目选定的实现即可。
+当前模板通过 `redis.enabled` 同时维护 Redis 和 Memory 两种实现；后续项目若永久固定为单一后端，可移除另一种实现及开关。
 
 ### 5.2 复用 Auth 的业务缓存层
 
-当前 `authcache.NewRedis` 接收通用 Store，负责会话及权限 JSON、Schema 版本、Key 和批量删除。因此，替换底层 Store 后可以继续复用这些逻辑。
+当前 `authcache.NewStoreCache` 接收通用 Store，负责会话及权限 JSON、Schema 版本、Key 和批量删除；内存与 Redis 共享这些逻辑。
 
-为避免名称误导，后续项目可将 Auth 包中的 `Redis`/`NewRedis` 改为 `StoreCache`/`NewStoreCache`，将 `cache/redis.go` 改为 `cache/store.go`；相应地可将模块根目录 `redis_key.go` 改为 `cache_key.go`，并同步目录规则。Key 的应用前缀、Token 摘要和权限路由格式可以保持不变。
+Auth 业务缓存已使用通用 `StoreCache` 命名；Redis Key 前缀只在启用 Redis 时生效，Token 摘要在两种后端中都保留。
 
 业务 Service 仍然只依赖会话及权限缓存契约，不直接访问内存 map。继续执行 Schema 校验，空权限集合仍需回填；缓存损坏不能静默当作 Miss。
 
@@ -160,7 +160,7 @@ type Store interface {
 5. 按方案 A 的配置和 Health 步骤移除 Redis 专属项；保留 `auth.permissionCacheTTL`。本地内存不需要一个伪造的 Redis Ping。
 6. 无引用后移除 Redis 基础设施实现与依赖，执行 `go mod tidy`。
 
-不要在 Redis 连接失败时自动创建内存 Store。该行为会切断共享会话及跨实例失效语义，属于另一个设计需求。
+本模板仅由 `redis.enabled` 显式选择后端；启用 Redis 后连接失败会中止启动，不会自动创建内存 Store。该约束避免切断共享会话及跨实例失效语义。
 
 ### 5.4 保留权限失效链路
 
@@ -206,7 +206,7 @@ Redis 会话不会自动搬到数据库或内存。切换前明确选择安排�
 - `internal/infrastructure/AGENTS.md`：补充内存生命周期或移除不再适用的 Redis 专属规则。
 - `architecture-adoption-plan.md`、README 和 YAML 示例：记录会话来源、部署实例数、缓存失效与重启行为。
 
-本指南提供后续项目裁剪步骤，不改变当前模板默认使用 Redis 的约定。
+本指南提供后续项目裁剪步骤；当前模板默认使用内存 Store，可通过 `redis.enabled` 选择 Redis。
 
 ## 8. 验证与交付
 
@@ -215,7 +215,7 @@ Redis 会话不会自动搬到数据库或内存。切换前明确选择安排�
 以下为在项目根目录执行的只读搜索，用于确认没有遗漏依赖；匹配结果需结合选定方案判断，不要求文档里完全没有 Redis 字样。
 
 ```powershell
-rg -n 'go-redis|redisinfra|redisPinger|RedisPinger|NewRedisStore|cfg\.Redis|config\.Redis' internal cmd configs go.mod
+rg -n 'go-redis|redisinfra|redisCachePinger|CachePinger|NewRedisStore|cfg\.Redis|config\.Redis' internal cmd configs go.mod
 rg -n 'SessionCache|GetPrincipal|PermissionCache|permissionCacheTTL|invalidatePending|enqueueInvalidations|PendingInvalidations|CompleteInvalidations' internal configs
 rg -n 'PermissionInvalidation|PermissionWriteLock|permission_cache_invalidations|permission_write_locks' internal migrations
 ```
@@ -224,7 +224,8 @@ rg -n 'PermissionInvalidation|PermissionWriteLock|permission_cache_invalidations
 
 | 场景 | 预期 |
 |---|---|
-| Redis 未启动 | 方案 A/B/C 能正常启动，Readiness 仅检查实际外部依赖 |
+| Redis 未启动且 `redis.enabled: false` | 使用内存 Store 正常启动，Readiness 只检查数据库 |
+| Redis 未启动且 `redis.enabled: true` | 启动失败，不静默切换内存 |
 | YAML 留有已删除的 Redis 字段 | 严格解码报错；删除残留字段后配置通过 |
 | 正常、过期、撤销及不存在的会话 | 分别认证成功或返回 401；数据源故障返回 503 |
 | 没有路由权限配置 | 继续返回 403 |
