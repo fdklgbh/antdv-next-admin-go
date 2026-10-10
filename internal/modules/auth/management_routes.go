@@ -1,8 +1,9 @@
 package auth
 
 import (
-	"antdv-next-admin-go/internal/httpserver/middleware"
 	"github.com/gin-gonic/gin"
+
+	"antdv-next-admin-go/internal/httpserver/middleware"
 )
 
 func (m *Module) RegisterManagementRoutes(private *gin.RouterGroup) {

@@ -1,6 +1,12 @@
 package handler
 
 import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/gin-gonic/gin"
+
 	"antdv-next-admin-go/internal/config"
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	"antdv-next-admin-go/internal/modules/auth/dto"
@@ -10,10 +16,6 @@ import (
 	"antdv-next-admin-go/internal/shared/contextx"
 	apperrors "antdv-next-admin-go/internal/shared/errors"
 	"antdv-next-admin-go/internal/shared/response"
-	"errors"
-	"github.com/gin-gonic/gin"
-	"net/http"
-	"time"
 )
 
 const refreshCookie = "refresh_token"

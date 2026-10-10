@@ -1,16 +1,18 @@
 package service
 
 import (
-	"antdv-next-admin-go/internal/modules/auth/dto"
-	"antdv-next-admin-go/internal/modules/auth/model"
-	"antdv-next-admin-go/internal/modules/auth/repository"
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"sort"
 	"strconv"
 	"strings"
+
+	"antdv-next-admin-go/internal/modules/auth/dto"
+	"antdv-next-admin-go/internal/modules/auth/model"
+	"antdv-next-admin-go/internal/modules/auth/repository"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Service) ManagedUser(ctx context.Context, id int64) (dto.UserInfo, error) {

@@ -1,11 +1,13 @@
 package repository
 
 import (
-	"antdv-next-admin-go/internal/modules/auth/model"
 	"context"
 	"errors"
 	"fmt"
+
 	"gorm.io/gorm"
+
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 func (r *Repository) FindUser(ctx context.Context, username string) (model.User, error) {

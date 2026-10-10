@@ -2,9 +2,10 @@ package migrations
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/go-gormigrate/gormigrate/v2"
 	"gorm.io/gorm"
-	"time"
 )
 
 type role000003 struct {

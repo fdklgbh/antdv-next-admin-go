@@ -1,11 +1,12 @@
 package app
 
 import (
-	"antdv-next-admin-go/internal/modules/auth"
 	"context"
 	"fmt"
 	"os"
 	"runtime"
+
+	"antdv-next-admin-go/internal/modules/auth"
 )
 
 func initializeSuperAdmin(ctx context.Context, module *auth.Module, username string) error {

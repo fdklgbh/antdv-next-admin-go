@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"gorm.io/gorm"
+
 	"antdv-next-admin-go/internal/config"
 	basecache "antdv-next-admin-go/internal/infrastructure/cache"
 	"antdv-next-admin-go/internal/infrastructure/logger"
@@ -8,7 +10,6 @@ import (
 	"antdv-next-admin-go/internal/modules/auth/handler"
 	"antdv-next-admin-go/internal/modules/auth/repository"
 	"antdv-next-admin-go/internal/modules/auth/service"
-	"gorm.io/gorm"
 )
 
 type Module struct {

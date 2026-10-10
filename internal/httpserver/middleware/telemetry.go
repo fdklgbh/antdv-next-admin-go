@@ -8,12 +8,13 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	"antdv-next-admin-go/internal/shared/contextx"
 	commoncode "antdv-next-admin-go/internal/shared/errcode"
 	apperrors "antdv-next-admin-go/internal/shared/errors"
 	"antdv-next-admin-go/internal/shared/response"
-	"github.com/gin-gonic/gin"
 )
 
 var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)

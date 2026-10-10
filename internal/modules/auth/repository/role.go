@@ -1,12 +1,14 @@
 package repository
 
 import (
-	"antdv-next-admin-go/internal/modules/auth/model"
 	"context"
 	"errors"
 	"fmt"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 // 普通权限取直接授权与角色授权；超级管理员身份独立查询角色关联。

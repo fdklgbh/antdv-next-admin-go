@@ -3,6 +3,8 @@ package httpserver
 import (
 	"net/http"
 
+	"github.com/gin-gonic/gin"
+
 	"antdv-next-admin-go/internal/httpserver/middleware"
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	"antdv-next-admin-go/internal/modules/account"
@@ -13,7 +15,6 @@ import (
 	commoncode "antdv-next-admin-go/internal/shared/errcode"
 	apperrors "antdv-next-admin-go/internal/shared/errors"
 	"antdv-next-admin-go/internal/shared/response"
-	"github.com/gin-gonic/gin"
 )
 
 type Dependencies struct {

@@ -1,19 +1,21 @@
 package main
 
 import (
-	"antdv-next-admin-go/internal/config"
-	"antdv-next-admin-go/internal/infrastructure/database"
-	"antdv-next-admin-go/internal/modules/auth/model"
-	"antdv-next-admin-go/internal/modules/auth/repository"
 	"bufio"
 	"context"
 	"flag"
 	"fmt"
-	"github.com/go-playground/validator/v10"
-	"golang.org/x/crypto/bcrypt"
 	"log"
 	"os"
 	"strings"
+
+	"github.com/go-playground/validator/v10"
+	"golang.org/x/crypto/bcrypt"
+
+	"antdv-next-admin-go/internal/config"
+	"antdv-next-admin-go/internal/infrastructure/database"
+	"antdv-next-admin-go/internal/modules/auth/model"
+	"antdv-next-admin-go/internal/modules/auth/repository"
 )
 
 func main() {

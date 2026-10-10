@@ -194,6 +194,7 @@ task check -- internal/shared/response/response.go internal/httpserver/router.go
 | 任务 | 对应命令 |
 |---|---|
 | `task fmt -- <文件列表>` | `gofmt -w <文件列表>` |
+| `task fmt:all` | 使用 `goimports` 整理 import，再用 `gofmt -s` 格式化并简化所有 Go 文件 |
 | `task test` | `go test ./...` |
 | `task vet` | `go vet ./...` |
 | `task build` | `go build -ldflags="-s -w" ./...` |
@@ -203,7 +204,7 @@ task check -- internal/shared/response/response.go internal/httpserver/router.go
 | `task migrate:down` | `go run ./cmd/migrate -config <CONFIG> -action down` |
 | `task migrate:new NAME=<名称>` | `go run ./tools/migrationgen -name <名称>` |
 
-未安装 Go Task 时，可直接执行表中对应命令。`build` 使用 `-ldflags="-s -w"`，链接时移除符号表和 DWARF 调试信息；`task check` 的构建步骤使用相同参数。当前 `build` 仅验证所有包能否编译，不输出发布二进制。
+未安装 Go Task 时，可直接执行表中对应命令。`task fmt:all` 会处理整个项目，并通过固定版本的 `goimports` 自动增删和排序 import；日常修改优先使用限定文件列表的 `task fmt` 或 `task check`。`build` 使用 `-ldflags="-s -w"`，链接时移除符号表和 DWARF 调试信息；`task check` 的构建步骤使用相同参数。当前 `build` 仅验证所有包能否编译，不输出发布二进制。
 
 发布模板基础能力前，应分别在 MySQL 8 和受支持的 PostgreSQL 上验证首次 Up、Down、再次 Up。项目完成数据库选型后，后续迁移只需验证所选数据库。
 

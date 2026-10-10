@@ -6,13 +6,14 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gin-gonic/gin"
+
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	authcode "antdv-next-admin-go/internal/modules/auth/errcode"
 	"antdv-next-admin-go/internal/modules/auth/model"
 	"antdv-next-admin-go/internal/shared/contextx"
 	apperrors "antdv-next-admin-go/internal/shared/errors"
 	"antdv-next-admin-go/internal/shared/response"
-	"github.com/gin-gonic/gin"
 )
 
 const principalKey = "auth.principal"

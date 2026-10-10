@@ -1,13 +1,15 @@
 package database
 
 import (
-	"antdv-next-admin-go/internal/config"
 	"context"
 	"fmt"
+
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
+
+	"antdv-next-admin-go/internal/config"
 )
 
 func Open(ctx context.Context, cfg config.Database) (*gorm.DB, func() error, error) {

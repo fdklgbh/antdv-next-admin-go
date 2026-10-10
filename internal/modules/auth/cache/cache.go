@@ -1,9 +1,10 @@
 package cache
 
 import (
-	"antdv-next-admin-go/internal/modules/auth/model"
 	"context"
 	"time"
+
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 type SessionCache interface {

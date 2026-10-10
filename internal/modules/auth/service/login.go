@@ -1,18 +1,20 @@
 package service
 
 import (
-	basecache "antdv-next-admin-go/internal/infrastructure/cache"
-	"antdv-next-admin-go/internal/modules/auth/dto"
-	"antdv-next-admin-go/internal/modules/auth/model"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
 	"strconv"
 	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+
+	basecache "antdv-next-admin-go/internal/infrastructure/cache"
+	"antdv-next-admin-go/internal/modules/auth/dto"
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 const accessLifetime = 15 * time.Minute

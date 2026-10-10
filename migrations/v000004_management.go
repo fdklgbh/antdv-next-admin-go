@@ -2,10 +2,11 @@ package migrations
 
 import (
 	"encoding/json"
+	"time"
+
 	"github.com/go-gormigrate/gormigrate/v2"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
 )
 
 type config000004 struct {

@@ -1,11 +1,12 @@
 package system
 
 import (
+	"gorm.io/gorm"
+
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	"antdv-next-admin-go/internal/modules/system/handler"
 	"antdv-next-admin-go/internal/modules/system/repository"
 	"antdv-next-admin-go/internal/modules/system/service"
-	"gorm.io/gorm"
 )
 
 type Module struct {

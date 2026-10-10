@@ -1,6 +1,17 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/mileusna/useragent"
+
 	"antdv-next-admin-go/internal/httpserver/middleware"
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	"antdv-next-admin-go/internal/modules/system/dto"
@@ -10,15 +21,6 @@ import (
 	commoncode "antdv-next-admin-go/internal/shared/errcode"
 	apperrors "antdv-next-admin-go/internal/shared/errors"
 	"antdv-next-admin-go/internal/shared/response"
-	"errors"
-	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/mileusna/useragent"
-	"io"
-	"mime"
-	"net/http"
-	"strings"
-	"time"
 )
 
 type Handler struct {

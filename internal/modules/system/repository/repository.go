@@ -1,14 +1,16 @@
 package repository
 
 import (
-	"antdv-next-admin-go/internal/modules/system/dto"
-	"antdv-next-admin-go/internal/modules/system/model"
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"time"
+
+	"antdv-next-admin-go/internal/modules/system/dto"
+	"antdv-next-admin-go/internal/modules/system/model"
 )
 
 var ErrInvalid = errors.New("invalid input")

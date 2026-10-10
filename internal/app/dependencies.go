@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/redis/go-redis/v9"
+
 	"antdv-next-admin-go/internal/config"
 	"antdv-next-admin-go/internal/httpserver"
 	basecache "antdv-next-admin-go/internal/infrastructure/cache"
@@ -17,7 +19,6 @@ import (
 	"antdv-next-admin-go/internal/modules/health"
 	healthhandler "antdv-next-admin-go/internal/modules/health/handler"
 	"antdv-next-admin-go/internal/modules/system"
-	"github.com/redis/go-redis/v9"
 )
 
 type redisCachePinger struct{ client *redis.Client }

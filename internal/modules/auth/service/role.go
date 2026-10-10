@@ -1,13 +1,15 @@
 package service
 
 import (
-	"antdv-next-admin-go/internal/modules/auth/dto"
-	"antdv-next-admin-go/internal/modules/auth/model"
 	"context"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/crypto/bcrypt"
 	"strconv"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"antdv-next-admin-go/internal/modules/auth/dto"
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 // prepareDisplay 在写入账号前确认存在可显示密码的终端，不向普通日志输出密码。

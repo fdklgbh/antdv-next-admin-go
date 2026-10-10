@@ -1,9 +1,10 @@
 package health
 
 import (
+	"database/sql"
+
 	"antdv-next-admin-go/internal/infrastructure/logger"
 	"antdv-next-admin-go/internal/modules/health/handler"
-	"database/sql"
 )
 
 type Module struct {

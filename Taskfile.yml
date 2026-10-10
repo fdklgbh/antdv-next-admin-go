@@ -25,6 +25,12 @@ tasks:
     cmds:
       - gofmt -w {{.CLI_ARGS}}
 
+  fmt:all:
+    desc: 格式化、简化并整理项目内所有 Go 文件的 import
+    cmds:
+      - go run golang.org/x/tools/cmd/goimports@v0.51.0 -w -local antdv-next-admin-go .
+      - gofmt -s -w .
+
   test:
     desc: 运行所有 Go 测试
     cmds:

@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	"antdv-next-admin-go/internal/modules/auth/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"antdv-next-admin-go/internal/modules/auth/model"
 )
 
 type Repository struct{ db *gorm.DB }

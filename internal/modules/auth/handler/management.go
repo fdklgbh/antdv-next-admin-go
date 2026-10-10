@@ -1,16 +1,18 @@
 package handler
 
 import (
+	"errors"
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+
 	"antdv-next-admin-go/internal/modules/auth/dto"
 	"antdv-next-admin-go/internal/modules/auth/model"
 	"antdv-next-admin-go/internal/shared/contextx"
 	commoncode "antdv-next-admin-go/internal/shared/errcode"
 	apperrors "antdv-next-admin-go/internal/shared/errors"
 	"antdv-next-admin-go/internal/shared/response"
-	"errors"
-	"github.com/gin-gonic/gin"
-	"net/http"
-	"strconv"
 )
 
 func (h *Handler) managementFail(c *gin.Context, err error) {
