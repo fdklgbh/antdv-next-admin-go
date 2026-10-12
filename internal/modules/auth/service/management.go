@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,24 +16,44 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var managementCodePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+
 func (s *Service) ManagedUser(ctx context.Context, id int64) (dto.UserInfo, error) {
 	u, err := s.repo.ManagedUser(ctx, id)
 	if err != nil {
 		return dto.UserInfo{}, err
 	}
-	codes, err := s.repo.PermissionCodes(ctx, id)
+	authorization, err := s.repo.LoadUserAuthorizationData(ctx, []int64{id})
 	if err != nil {
 		return dto.UserInfo{}, err
 	}
-	roles, permissions, err := s.userAuthorization(ctx, u, codes)
+	permissionRows, err := s.repo.PermissionDefinitions(ctx)
 	if err != nil {
 		return dto.UserInfo{}, err
 	}
-	status := "inactive"
-	if u.Enabled {
-		status = "active"
+	definitions, permissionsByCode, err := decodePermissionDefinitions(permissionRows)
+	if err != nil {
+		return dto.UserInfo{}, err
 	}
-	return dto.UserInfo{ID: strconv.FormatInt(u.ID, 10), Username: u.Username, DisplayName: u.DisplayName, Email: u.Email, Phone: u.Phone, Gender: u.Gender, Bio: u.Bio, Status: status, CreatedAt: u.CreatedAt, UpdatedAt: u.UpdatedAt, Roles: roles, Permissions: permissions}, nil
+	rolesByID := make(map[int64]model.Role, len(authorization.Roles))
+	for _, role := range authorization.Roles {
+		rolesByID[role.ID] = role
+	}
+	roles := make([]model.Role, 0, len(authorization.UserRoles))
+	for _, userRole := range authorization.UserRoles {
+		if role, ok := rolesByID[userRole.RoleID]; ok {
+			roles = append(roles, role)
+		}
+	}
+	roleCodesByID := make(map[int64][]string)
+	for _, assignment := range authorization.RolePermissions {
+		roleCodesByID[assignment.RoleID] = append(roleCodesByID[assignment.RoleID], assignment.PermissionCode)
+	}
+	directCodes := make([]string, 0, len(authorization.UserPermissions))
+	for _, assignment := range authorization.UserPermissions {
+		directCodes = append(directCodes, assignment.PermissionCode)
+	}
+	return managedUserInfo(u, roles, roleCodesByID, directCodes, definitions, permissionsByCode), nil
 }
 func (s *Service) ListUsers(ctx context.Context, q dto.PageQuery) (dto.Page[dto.UserInfo], error) {
 	rows, total, err := s.repo.ListUsers(ctx, q)
@@ -40,16 +61,176 @@ func (s *Service) ListUsers(ctx context.Context, q dto.PageQuery) (dto.Page[dto.
 	if err != nil {
 		return out, err
 	}
-	for _, u := range rows {
-		info, err := s.ManagedUser(ctx, u.ID)
-		if err != nil {
-			return out, err
+	if len(rows) == 0 {
+		return out, nil
+	}
+	userIDs := make([]int64, 0, len(rows))
+	for _, user := range rows {
+		userIDs = append(userIDs, user.ID)
+	}
+	authorization, err := s.repo.LoadUserAuthorizationData(ctx, userIDs)
+	if err != nil {
+		return out, err
+	}
+	permissionRows, err := s.repo.PermissionDefinitions(ctx)
+	if err != nil {
+		return out, err
+	}
+	definitions, permissionsByCode, err := decodePermissionDefinitions(permissionRows)
+	if err != nil {
+		return out, err
+	}
+	rolesByID := make(map[int64]model.Role, len(authorization.Roles))
+	for _, role := range authorization.Roles {
+		rolesByID[role.ID] = role
+	}
+	rolesByUserID := make(map[int64][]model.Role, len(rows))
+	for _, userRole := range authorization.UserRoles {
+		if role, ok := rolesByID[userRole.RoleID]; ok {
+			rolesByUserID[userRole.UserID] = append(rolesByUserID[userRole.UserID], role)
 		}
-		out.List = append(out.List, info)
+	}
+	roleCodesByID := make(map[int64][]string)
+	for _, assignment := range authorization.RolePermissions {
+		roleCodesByID[assignment.RoleID] = append(roleCodesByID[assignment.RoleID], assignment.PermissionCode)
+	}
+	directCodesByUserID := make(map[int64][]string, len(rows))
+	for _, assignment := range authorization.UserPermissions {
+		directCodesByUserID[assignment.UserID] = append(directCodesByUserID[assignment.UserID], assignment.PermissionCode)
+	}
+	for _, user := range rows {
+		out.List = append(out.List, managedUserInfo(
+			user, rolesByUserID[user.ID], roleCodesByID, directCodesByUserID[user.ID], definitions, permissionsByCode,
+		))
 	}
 	return out, nil
 }
+
+func managedUserInfo(
+	user model.User,
+	roles []model.Role,
+	roleCodesByID map[int64][]string,
+	directCodes []string,
+	definitions []dto.PermissionInfo,
+	permissionsByCode map[string]dto.PermissionInfo,
+) dto.UserInfo {
+	roleInfos := make([]dto.RoleInfo, 0, len(roles))
+	effectiveCodes := make(map[string]struct{})
+	superAdmin := false
+	for _, role := range roles {
+		codes := roleCodesByID[role.ID]
+		info := roleInfoFromPermissions(role, codes, definitions)
+		if role.Code == "super_admin" {
+			superAdmin = true
+			info.Permissions[0].Description = "超级管理员全部权限"
+		}
+		roleInfos = append(roleInfos, info)
+		if role.Code != "super_admin" {
+			for _, code := range codes {
+				if code != "*" {
+					effectiveCodes[code] = struct{}{}
+				}
+			}
+		}
+	}
+	for _, code := range directCodes {
+		if code != "*" {
+			effectiveCodes[code] = struct{}{}
+		}
+	}
+	var userPermissions []dto.PermissionInfo
+	if superAdmin {
+		userPermissions = []dto.PermissionInfo{{ID: "*", Code: "*", Name: json.RawMessage(`"全部权限"`), Description: "超级管理员全部权限", Type: "api", Resource: "*", Action: "*"}}
+	} else {
+		codes := make([]string, 0, len(effectiveCodes))
+		for code := range effectiveCodes {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		userPermissions = resolvePermissionCodes(codes, permissionsByCode)
+	}
+	status := "inactive"
+	if user.Enabled {
+		status = "active"
+	}
+	return dto.UserInfo{
+		ID: strconv.FormatInt(user.ID, 10), Username: user.Username, DisplayName: user.DisplayName,
+		Email: user.Email, Phone: user.Phone, Gender: user.Gender, Bio: user.Bio, Status: status,
+		CreatedAt: user.CreatedAt, UpdatedAt: user.UpdatedAt, Roles: roleInfos, Permissions: userPermissions,
+	}
+}
+
+func decodePermissionDefinitions(rows []model.Permission) ([]dto.PermissionInfo, map[string]dto.PermissionInfo, error) {
+	definitions := make([]dto.PermissionInfo, 0, len(rows))
+	byCode := make(map[string]dto.PermissionInfo, len(rows))
+	for _, row := range rows {
+		var item dto.PermissionInfo
+		if err := json.Unmarshal([]byte(row.Definition), &item); err != nil {
+			return nil, nil, fmt.Errorf("decode permission definition %q: %w", row.Code, err)
+		}
+		definitions = append(definitions, item)
+		byCode[row.Code] = item
+	}
+	return definitions, byCode, nil
+}
+
+func decodeSelectedPermissionDefinitions(rows []model.Permission, codes []string) ([]dto.PermissionInfo, error) {
+	selected := make(map[string]bool, len(codes))
+	for _, code := range codes {
+		selected[code] = true
+	}
+	definitions := make([]dto.PermissionInfo, 0, len(selected))
+	for _, row := range rows {
+		if !selected[row.Code] {
+			continue
+		}
+		var item dto.PermissionInfo
+		if err := json.Unmarshal([]byte(row.Definition), &item); err != nil {
+			return nil, fmt.Errorf("decode permission definition %q: %w", row.Code, err)
+		}
+		definitions = append(definitions, item)
+	}
+	return definitions, nil
+}
+
+func roleInfoFromPermissions(role model.Role, codes []string, definitions []dto.PermissionInfo) dto.RoleInfo {
+	selected := make(map[string]bool, len(codes))
+	for _, code := range codes {
+		selected[code] = true
+	}
+	permissions := []dto.PermissionInfo{}
+	if role.Code == "super_admin" {
+		permissions = []dto.PermissionInfo{{ID: "*", Code: "*", Name: json.RawMessage(`"全部权限"`), Type: "api", Resource: "*", Action: "*"}}
+	} else {
+		for _, item := range definitions {
+			if selected[item.Code] {
+				permissions = append(permissions, item)
+			}
+		}
+	}
+	return dto.RoleInfo{ID: strconv.FormatInt(role.ID, 10), Name: role.Name, Code: role.Code, Description: role.Description, Level: role.Level, Permissions: permissions, CreatedAt: role.CreatedAt, UpdatedAt: role.UpdatedAt}
+}
+
+func resolvePermissionCodes(codes []string, byCode map[string]dto.PermissionInfo) []dto.PermissionInfo {
+	permissions := make([]dto.PermissionInfo, 0, len(codes))
+	for _, code := range codes {
+		if code == "*" {
+			continue
+		}
+		item, ok := byCode[code]
+		if !ok {
+			name, _ := json.Marshal(code)
+			item = dto.PermissionInfo{ID: code, Code: code, Name: name, Type: "api"}
+		}
+		permissions = append(permissions, item)
+	}
+	return permissions
+}
+
 func (s *Service) roleInfo(ctx context.Context, role model.Role) (dto.RoleInfo, error) {
+	if role.Code == "super_admin" {
+		return roleInfoFromPermissions(role, nil, nil), nil
+	}
 	codes, err := s.repo.RolePermissionCodes(ctx, role.ID)
 	if err != nil {
 		return dto.RoleInfo{}, err
@@ -58,24 +239,11 @@ func (s *Service) roleInfo(ctx context.Context, role model.Role) (dto.RoleInfo, 
 	if err != nil {
 		return dto.RoleInfo{}, err
 	}
-	selected := map[string]bool{}
-	for _, code := range codes {
-		selected[code] = true
+	items, err := decodeSelectedPermissionDefinitions(definitions, codes)
+	if err != nil {
+		return dto.RoleInfo{}, err
 	}
-	permissions := []dto.PermissionInfo{}
-	for _, row := range definitions {
-		if selected[row.Code] {
-			var item dto.PermissionInfo
-			if err := json.Unmarshal([]byte(row.Definition), &item); err != nil {
-				return dto.RoleInfo{}, err
-			}
-			permissions = append(permissions, item)
-		}
-	}
-	if role.Code == "super_admin" {
-		permissions = []dto.PermissionInfo{{ID: "*", Code: "*", Name: json.RawMessage(`"全部权限"`), Type: "api", Resource: "*", Action: "*"}}
-	}
-	return dto.RoleInfo{ID: strconv.FormatInt(role.ID, 10), Name: role.Name, Code: role.Code, Description: role.Description, Permissions: permissions, CreatedAt: role.CreatedAt, UpdatedAt: role.UpdatedAt}, nil
+	return roleInfoFromPermissions(role, codes, items), nil
 }
 func (s *Service) ListRoles(ctx context.Context, q dto.PageQuery) (dto.Page[dto.RoleInfo], error) {
 	rows, total, err := s.repo.ListRoles(ctx, q)
@@ -83,12 +251,46 @@ func (s *Service) ListRoles(ctx context.Context, q dto.PageQuery) (dto.Page[dto.
 	if err != nil {
 		return out, err
 	}
+	if len(rows) == 0 {
+		return out, nil
+	}
+	roleIDs := make([]int64, 0, len(rows))
+	needsDefinitions := false
 	for _, role := range rows {
-		info, err := s.roleInfo(ctx, role)
+		roleIDs = append(roleIDs, role.ID)
+		needsDefinitions = needsDefinitions || role.Code != "super_admin"
+	}
+	assignments, err := s.repo.RolePermissionAssignments(ctx, roleIDs)
+	if err != nil {
+		return out, err
+	}
+	codesByRoleID := make(map[int64][]string)
+	for _, assignment := range assignments {
+		codesByRoleID[assignment.RoleID] = append(codesByRoleID[assignment.RoleID], assignment.PermissionCode)
+	}
+	var definitions []dto.PermissionInfo
+	if needsDefinitions {
+		selectedCodes := make(map[string]struct{})
+		for _, codes := range codesByRoleID {
+			for _, code := range codes {
+				selectedCodes[code] = struct{}{}
+			}
+		}
+		codes := make([]string, 0, len(selectedCodes))
+		for code := range selectedCodes {
+			codes = append(codes, code)
+		}
+		permissionRows, err := s.repo.PermissionDefinitions(ctx)
 		if err != nil {
 			return out, err
 		}
-		out.List = append(out.List, info)
+		definitions, err = decodeSelectedPermissionDefinitions(permissionRows, codes)
+		if err != nil {
+			return out, err
+		}
+	}
+	for _, role := range rows {
+		out.List = append(out.List, roleInfoFromPermissions(role, codesByRoleID[role.ID], definitions))
 	}
 	return out, nil
 }
@@ -137,10 +339,13 @@ func (s *Service) DeleteUser(ctx context.Context, actor, id int64) error {
 	return s.invalidatePending(ctx, "delete_user", key)
 }
 func (s *Service) SaveRole(ctx context.Context, actor, id int64, input dto.RoleInput) (dto.RoleInfo, error) {
-	if strings.TrimSpace(input.Code) != input.Code || strings.TrimSpace(input.Name) == "" {
+	if strings.TrimSpace(input.Code) != input.Code ||
+		len(input.Code) > 64 ||
+		!managementCodePattern.MatchString(input.Code) ||
+		strings.TrimSpace(input.Name) == "" {
 		return dto.RoleInfo{}, model.ErrInvalid
 	}
-	role := model.Role{ID: id, Name: input.Name, Code: input.Code, Description: input.Description}
+	role := model.Role{ID: id, Name: input.Name, Code: input.Code, Description: input.Description, Level: input.Level}
 	codes := []string{}
 	seen := map[string]bool{}
 	for _, p := range input.Permissions {
@@ -159,9 +364,9 @@ func (s *Service) SaveRole(ctx context.Context, actor, id int64, input dto.RoleI
 	}
 	return s.Role(ctx, role.ID)
 }
-func (s *Service) DeleteRole(ctx context.Context, id int64) error {
+func (s *Service) DeleteRole(ctx context.Context, actor, id int64) error {
 	key := fmt.Sprintf("delete_role_%d", id)
-	if err := s.repo.DeleteRole(ctx, id, key); err != nil {
+	if err := s.repo.DeleteRole(ctx, actor, id, key); err != nil {
 		return err
 	}
 	return s.invalidatePending(ctx, "delete_role", key)
@@ -187,12 +392,15 @@ func (s *Service) Permissions(ctx context.Context, q dto.PageQuery, tree bool) (
 	build = func(parent string) []dto.PermissionInfo {
 		out := []dto.PermissionInfo{}
 		for _, p := range all {
-			if p.ParentID != parent {
+			parentID := ""
+			if p.ParentID != nil {
+				parentID = *p.ParentID
+			}
+			if parentID != parent {
 				continue
 			}
 			p.Children = build(p.ID)
-			match := (q.Keyword == "" || strings.Contains(strings.ToLower(p.Code), strings.ToLower(q.Keyword)) || strings.Contains(strings.ToLower(string(p.Name)), strings.ToLower(q.Keyword))) && (q.Code == "" || strings.Contains(p.Code, q.Code)) && (q.Name == "" || strings.Contains(string(p.Name), q.Name)) && (q.Status == "" || p.Status == q.Status) && (q.Type == "" || p.Type == q.Type)
-			if match || len(p.Children) > 0 {
+			if permissionMatchesQuery(p, q) || len(p.Children) > 0 {
 				out = append(out, p)
 			}
 		}
@@ -200,6 +408,55 @@ func (s *Service) Permissions(ctx context.Context, q dto.PageQuery, tree bool) (
 	}
 	return build(""), nil
 }
+
+// permissionSearchName 提取权限名称的可搜索文本，多语言对象只拼接语言值，不包含 JSON key 与标点。
+func permissionSearchName(name json.RawMessage) string {
+	var plain string
+	if err := json.Unmarshal(name, &plain); err == nil {
+		return plain
+	}
+	var localized map[string]string
+	if err := json.Unmarshal(name, &localized); err != nil {
+		return ""
+	}
+	keys := make([]string, 0, len(localized))
+	for key := range localized {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value := strings.TrimSpace(localized[key]); value != "" {
+			values = append(values, value)
+		}
+	}
+	return strings.Join(values, " ")
+}
+
+// permissionMatchesQuery 判断权限是否命中列表查询条件，名称匹配使用解析后的可搜索文本。
+func permissionMatchesQuery(p dto.PermissionInfo, q dto.PageQuery) bool {
+	name := permissionSearchName(p.Name)
+	if q.Keyword != "" {
+		keyword := strings.ToLower(q.Keyword)
+		if !strings.Contains(strings.ToLower(p.Code), keyword) && !strings.Contains(strings.ToLower(name), keyword) {
+			return false
+		}
+	}
+	if q.Code != "" && !strings.Contains(p.Code, q.Code) {
+		return false
+	}
+	if q.Name != "" && !strings.Contains(name, q.Name) {
+		return false
+	}
+	if q.Status != "" && p.Status != q.Status {
+		return false
+	}
+	if q.Type != "" && p.Type != q.Type {
+		return false
+	}
+	return true
+}
+
 func (s *Service) Permission(ctx context.Context, id string) (dto.PermissionInfo, error) {
 	rows, err := s.Permissions(ctx, dto.PageQuery{}, false)
 	if err != nil {
@@ -213,7 +470,11 @@ func (s *Service) Permission(ctx context.Context, id string) (dto.PermissionInfo
 	return dto.PermissionInfo{}, model.ErrNotFound
 }
 func (s *Service) SavePermission(ctx context.Context, id string, p dto.PermissionInfo) (dto.PermissionInfo, error) {
-	if p.Code == "" || p.Code == "*" || len(p.Code) > 128 || len(p.Description) > 1000 || len(p.Resource) > 255 || len(p.Action) > 64 || len(p.Path) > 255 || len(p.Component) > 255 || len(p.Icon) > 128 || len(p.ParentID) > 128 {
+	parentIDTooLong := p.ParentID != nil && len(*p.ParentID) > 128
+	if p.Code == "" || p.Code == "*" || len(p.Code) > 128 ||
+		!managementCodePattern.MatchString(p.Code) ||
+		len(p.Description) > 1000 || len(p.Resource) > 255 || len(p.Action) > 64 ||
+		len(p.Path) > 255 || len(p.Component) > 255 || len(p.Icon) > 128 || parentIDTooLong {
 		return p, model.ErrInvalid
 	}
 	if p.Type != "menu" && p.Type != "button" && p.Type != "api" {

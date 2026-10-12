@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -88,8 +89,8 @@ func (s *Service) ClearLogs(ctx context.Context, kind string) error {
 	return s.repo.ClearLogs(ctx, kind)
 }
 func (s *Service) Upload(ctx context.Context, name, uploader string, data []byte) (model.File, error) {
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
-	if name == "" || len(name) > 255 || len(data) == 0 || len(data) > 10*1024*1024 {
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+	if name == "." || name == "/" || strings.TrimSpace(name) == "" || len(name) > 255 || len(data) == 0 || len(data) > 10*1024*1024 {
 		return model.File{}, repository.ErrInvalid
 	}
 	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(name)), ".")

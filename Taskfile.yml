@@ -33,8 +33,10 @@ tasks:
 
   test:
     desc: 运行所有 Go 测试
+    env:
+      CONFIG: '{{.ROOT_DIR}}/configs/config.test.yaml'
     cmds:
-      - go test ./...
+      - go test -p 1 ./...
 
   vet:
     desc: 执行 Go 静态检查

@@ -42,6 +42,18 @@ func (r *Repository) RolePermissionCodes(ctx context.Context, roleID int64) ([]s
 	}
 	return codes, nil
 }
+
+func (r *Repository) RolePermissionAssignments(ctx context.Context, roleIDs []int64) ([]model.RolePermission, error) {
+	rows := []model.RolePermission{}
+	if len(roleIDs) == 0 {
+		return rows, nil
+	}
+	if err := r.db.WithContext(ctx).Where("role_id IN ?", roleIDs).Order("role_id, permission_code").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query role permission assignments: %w", err)
+	}
+	return rows, nil
+}
+
 func (r *Repository) PermissionDefinitions(ctx context.Context) ([]model.Permission, error) {
 	rows := []model.Permission{}
 	if err := r.db.WithContext(ctx).Order("code").Find(&rows).Error; err != nil {

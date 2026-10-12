@@ -7,6 +7,7 @@ type Role struct {
 	Code        string `gorm:"size:64;not null;uniqueIndex"`
 	Name        string `gorm:"size:128;not null"`
 	Description string `gorm:"size:255;not null"`
+	Level       int    `gorm:"not null;default:0"`
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

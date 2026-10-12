@@ -8,3 +8,4 @@ coverage.out
 *.exe
 *.log
 /configs/config.dev.yaml
+/configs/config.test.yaml

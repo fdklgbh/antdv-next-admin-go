@@ -32,6 +32,7 @@ type RoleInput struct {
 	Name        string           `json:"name" binding:"required,max=128"`
 	Code        string           `json:"code" binding:"required,max=64"`
 	Description string           `json:"description" binding:"max=255"`
+	Level       int              `json:"level" binding:"min=0,max=99"`
 	Permissions []PermissionInfo `json:"permissions" binding:"required"`
 }
 type PasswordInput struct {

@@ -154,7 +154,8 @@ func (h *Handler) DeleteRole(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if err := h.service.DeleteRole(c.Request.Context(), id); err != nil {
+	actor, _ := contextx.UserID(c.Request.Context())
+	if err := h.service.DeleteRole(c.Request.Context(), actor, id); err != nil {
 		h.managementFail(c, err)
 		return
 	}

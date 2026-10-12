@@ -26,7 +26,7 @@ type PermissionInfo struct {
 	Resource    string           `json:"resource"`
 	Action      string           `json:"action"`
 	Type        string           `json:"type"`
-	ParentID    string           `json:"parentId,omitempty"`
+	ParentID    *string          `json:"parentId,omitempty"`
 	Path        string           `json:"path,omitempty"`
 	Component   string           `json:"component,omitempty"`
 	Icon        string           `json:"icon,omitempty"`
@@ -55,6 +55,7 @@ type RoleInfo struct {
 	Code        string           `json:"code"`
 	Name        string           `json:"name"`
 	Description string           `json:"description"`
+	Level       int              `json:"level"`
 	Permissions []PermissionInfo `json:"permissions"`
 	CreatedAt   time.Time        `json:"createdAt"`
 	UpdatedAt   time.Time        `json:"updatedAt"`

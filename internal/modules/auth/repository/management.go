@@ -70,10 +70,95 @@ func (r *Repository) ManagedUser(ctx context.Context, id int64) (model.User, err
 	err := r.db.WithContext(ctx).First(&user, id).Error
 	return user, managementError(err)
 }
+
+type UserAuthorizationData struct {
+	UserRoles       []model.UserRole
+	Roles           []model.Role
+	RolePermissions []model.RolePermission
+	UserPermissions []model.UserPermission
+}
+
+func (r *Repository) LoadUserAuthorizationData(ctx context.Context, userIDs []int64) (UserAuthorizationData, error) {
+	data := UserAuthorizationData{}
+	if len(userIDs) == 0 {
+		return data, nil
+	}
+	if err := r.db.WithContext(ctx).Where("user_id IN ?", userIDs).Order("user_id, role_id").Find(&data.UserRoles).Error; err != nil {
+		return data, managementError(err)
+	}
+	roleIDs := make([]int64, 0, len(data.UserRoles))
+	seenRoleIDs := make(map[int64]bool, len(data.UserRoles))
+	for _, userRole := range data.UserRoles {
+		if !seenRoleIDs[userRole.RoleID] {
+			seenRoleIDs[userRole.RoleID] = true
+			roleIDs = append(roleIDs, userRole.RoleID)
+		}
+	}
+	if len(roleIDs) > 0 {
+		if err := r.db.WithContext(ctx).Where("id IN ?", roleIDs).Order("id").Find(&data.Roles).Error; err != nil {
+			return data, managementError(err)
+		}
+		if err := r.db.WithContext(ctx).Where("role_id IN ?", roleIDs).Order("role_id, permission_code").Find(&data.RolePermissions).Error; err != nil {
+			return data, managementError(err)
+		}
+	}
+	if err := r.db.WithContext(ctx).Where("user_id IN ?", userIDs).Order("user_id, permission_code").Find(&data.UserPermissions).Error; err != nil {
+		return data, managementError(err)
+	}
+	return data, nil
+}
+
 func isSuper(tx *gorm.DB, id int64) (bool, error) {
 	var count int64
 	err := tx.Table("auth_user_roles AS ur").Joins("JOIN auth_roles AS r ON r.id = ur.role_id").Where("ur.user_id = ? AND r.code = ?", id, "super_admin").Count(&count).Error
 	return count > 0, err
+}
+
+// superAdminCode 超级管理员角色码，独占最高优先级，任何人（含其本人）都不能修改或删除。
+const superAdminCode = "super_admin"
+
+// builtinRoleCodes 内置角色码，不允许通过接口新建或改名占用。
+var builtinRoleCodes = map[string]bool{
+	"super_admin": true,
+	"admin":       true,
+	"manager":     true,
+	"user":        true,
+	"guest":       true,
+}
+
+// actorRoleLevel 返回操作者的最高角色优先级；超级管理员视为最高 +1，保证能管理除 super_admin 角色外的一切。
+func actorRoleLevel(tx *gorm.DB, actor int64) (int, error) {
+	super, err := isSuper(tx, actor)
+	if err != nil {
+		return 0, err
+	}
+	if super {
+		return 101, nil
+	}
+	var level int
+	if err := tx.Table("auth_roles AS r").
+		Joins("JOIN auth_user_roles AS ur ON ur.role_id = r.id").
+		Where("ur.user_id = ? AND r.code <> ?", actor, superAdminCode).
+		Select("COALESCE(MAX(r.level), 0)").Scan(&level).Error; err != nil {
+		return 0, err
+	}
+	return level, nil
+}
+
+// requireManageableRole 校验操作者能否管理目标角色：不能管理同级或更高优先级的角色，
+// 且 super_admin 角色对所有人（含超级管理员本人）都不可管理。
+func requireManageableRole(tx *gorm.DB, actor int64, targetCode string, targetLevel int) error {
+	if targetCode == superAdminCode {
+		return model.ErrProtected
+	}
+	level, err := actorRoleLevel(tx, actor)
+	if err != nil {
+		return err
+	}
+	if targetLevel >= level {
+		return model.ErrProtected
+	}
+	return nil
 }
 
 // 所有管理写操作共用权限写锁；提交前持久化受影响用户，提交后由 Service 清理缓存。
@@ -115,12 +200,21 @@ func (r *Repository) SaveUser(ctx context.Context, actor int64, user *model.User
 		}
 		assigningSuper := false
 		for _, role := range roles {
-			if role.Code == "super_admin" {
+			if role.Code == superAdminCode {
 				assigningSuper = true
 			}
 		}
 		if assigningSuper && !actorSuper {
 			return model.ErrProtected
+		}
+		// 分配角色同样受优先级约束：不能分配同级或更高优先级的角色。
+		// 编辑自己时跳过：下方 self-check 保证自己的角色集合不会被修改。
+		if user.ID != actor {
+			for _, role := range roles {
+				if err := requireManageableRole(tx, actor, role.Code, role.Level); err != nil {
+					return err
+				}
+			}
 		}
 		if user.ID == 0 {
 			if err := tx.Create(user).Error; err != nil {
@@ -137,6 +231,39 @@ func (r *Repository) SaveUser(ctx context.Context, actor int64, user *model.User
 			}
 			if protected && (!actorSuper || !assigningSuper || !user.Enabled) {
 				return model.ErrProtected
+			}
+			// 目标用户当前已有的角色也必须在可管理范围内，避免越级修改他人角色。
+			// 编辑自己的资料时跳过该校验：下方 self-check 已保证自己的角色集合不可变更。
+			if user.ID != actor {
+				var currentRoles []model.Role
+				if err := tx.Table("auth_roles AS r").
+					Joins("JOIN auth_user_roles AS ur ON ur.role_id = r.id").
+					Where("ur.user_id = ?", user.ID).Find(&currentRoles).Error; err != nil {
+					return err
+				}
+				for _, role := range currentRoles {
+					if err := requireManageableRole(tx, actor, role.Code, role.Level); err != nil {
+						return err
+					}
+				}
+			}
+			if user.ID == actor && !actorSuper {
+				var currentRoleIDs []int64
+				if err := tx.Model(&model.UserRole{}).Where("user_id = ?", actor).Pluck("role_id", &currentRoleIDs).Error; err != nil {
+					return err
+				}
+				requestedRoleIDs := make(map[int64]struct{}, len(roleIDs))
+				for _, roleID := range roleIDs {
+					requestedRoleIDs[roleID] = struct{}{}
+				}
+				if len(currentRoleIDs) != len(requestedRoleIDs) {
+					return model.ErrProtected
+				}
+				for _, roleID := range currentRoleIDs {
+					if _, ok := requestedRoleIDs[roleID]; !ok {
+						return model.ErrProtected
+					}
+				}
 			}
 			if user.Username != old.Username {
 				return model.ErrInvalid
@@ -195,7 +322,7 @@ func (r *Repository) SaveRole(ctx context.Context, actor int64, role *model.Role
 				return err
 			}
 		}
-		if role.Code == "super_admin" {
+		if role.Code == superAdminCode {
 			return model.ErrProtected
 		}
 		var count int64
@@ -208,6 +335,13 @@ func (r *Repository) SaveRole(ctx context.Context, actor int64, role *model.Role
 			return model.ErrInvalid
 		}
 		if role.ID == 0 {
+			// 新建角色：不允许占用内置角色码；优先级必须低于操作者。
+			if builtinRoleCodes[role.Code] {
+				return model.ErrProtected
+			}
+			if err := requireManageableRole(tx, actor, role.Code, role.Level); err != nil {
+				return err
+			}
 			if err := tx.Create(role).Error; err != nil {
 				return err
 			}
@@ -216,13 +350,18 @@ func (r *Repository) SaveRole(ctx context.Context, actor int64, role *model.Role
 			if err := tx.First(&old, role.ID).Error; err != nil {
 				return err
 			}
-			if old.Code == "super_admin" {
-				return model.ErrProtected
+			// 编辑既有角色：不能管理同级及更高优先级角色，super_admin 角色不可修改。
+			if err := requireManageableRole(tx, actor, old.Code, old.Level); err != nil {
+				return err
 			}
 			if old.Code != role.Code {
 				return model.ErrInvalid
 			}
-			if err := tx.Model(&old).Updates(map[string]any{"name": role.Name, "description": role.Description}).Error; err != nil {
+			// 新优先级同样必须低于操作者，且不能借编辑提权到原等级及以上。
+			if err := requireManageableRole(tx, actor, role.Code, role.Level); err != nil {
+				return err
+			}
+			if err := tx.Model(&old).Updates(map[string]any{"name": role.Name, "description": role.Description, "level": role.Level}).Error; err != nil {
 				return err
 			}
 		}
@@ -240,15 +379,14 @@ func (r *Repository) SaveRole(ctx context.Context, actor int64, role *model.Role
 		return nil
 	})
 }
-func (r *Repository) DeleteRole(ctx context.Context, id int64, key string) error {
+func (r *Repository) DeleteRole(ctx context.Context, actor, id int64, key string) error {
 	return r.manage(ctx, key, func(tx *gorm.DB) error {
 		var role model.Role
 		if err := tx.First(&role, id).Error; err != nil {
 			return err
 		}
-		switch role.Code {
-		case "super_admin", "admin", "manager", "user", "guest":
-			return model.ErrProtected
+		if err := requireManageableRole(tx, actor, role.Code, role.Level); err != nil {
+			return err
 		}
 		var count int64
 		if err := tx.Model(&model.UserRole{}).Where("role_id = ?", id).Count(&count).Error; err != nil {
@@ -297,8 +435,14 @@ func (r *Repository) SavePermission(ctx context.Context, id string, p *dto.Permi
 				return model.ErrInvalid
 			}
 			p.ID = id
+			if p.ParentID == nil {
+				p.ParentID = old.ParentID
+			}
 		}
-		parent := p.ParentID
+		parent := ""
+		if p.ParentID != nil {
+			parent = *p.ParentID
+		}
 		seen := map[string]bool{p.ID: true}
 		for parent != "" {
 			if seen[parent] {
@@ -309,11 +453,14 @@ func (r *Repository) SavePermission(ctx context.Context, id string, p *dto.Permi
 			if !ok || item.Type != "menu" {
 				return model.ErrInvalid
 			}
-			parent = item.ParentID
+			parent = ""
+			if item.ParentID != nil {
+				parent = *item.ParentID
+			}
 		}
 		if p.Type != "menu" {
 			for _, item := range items {
-				if item.ParentID == p.ID {
+				if item.ParentID != nil && *item.ParentID == p.ID {
 					return model.ErrConflict
 				}
 			}
@@ -337,7 +484,7 @@ func (r *Repository) DeletePermission(ctx context.Context, id, key string) error
 		}
 		code := ""
 		for _, p := range items {
-			if p.ParentID == id {
+			if p.ParentID != nil && *p.ParentID == id {
 				return model.ErrConflict
 			}
 			if p.ID == id {
