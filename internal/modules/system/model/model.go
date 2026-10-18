@@ -18,6 +18,18 @@ type Config struct {
 
 func (Config) TableName() string { return "sys_configs" }
 
+type ConfigGroup struct {
+	ID          string    `gorm:"size:64;primaryKey" json:"id"`
+	Code        string    `gorm:"size:64;not null;uniqueIndex" json:"code"`
+	Name        string    `gorm:"size:128;not null" json:"name"`
+	Description string    `gorm:"size:1000" json:"description"`
+	Sort        int       `gorm:"not null;default:0" json:"sort"`
+	CreatedAt   time.Time `json:"createTime"`
+	UpdatedAt   time.Time `json:"updateTime"`
+}
+
+func (ConfigGroup) TableName() string { return "sys_config_groups" }
+
 type DictType struct {
 	ID          string    `gorm:"size:64;primaryKey" json:"id"`
 	Name        string    `gorm:"size:128;not null" json:"name" validate:"required,max=128"`

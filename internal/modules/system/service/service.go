@@ -32,6 +32,9 @@ func identifier() string { var id [16]byte; rand.Read(id[:]); return hex.EncodeT
 func (s *Service) List(ctx context.Context, kind string, q dto.Query, all bool) (dto.Page, error) {
 	return s.repo.List(ctx, kind, q, all)
 }
+func (s *Service) ConfigGroups(ctx context.Context) ([]dto.ConfigGroup, error) {
+	return s.repo.ConfigGroups(ctx)
+}
 func (s *Service) ConfigByKey(ctx context.Context, key string) (model.Config, error) {
 	return s.repo.ConfigByKey(ctx, key)
 }

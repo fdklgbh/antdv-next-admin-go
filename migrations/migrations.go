@@ -11,6 +11,7 @@ func All() []*gormigrate.Migration {
 		migration000002AuthUsers(),
 		migration000003Roles(),
 		migration000004Management(),
+		migration000005ConfigGroups(),
 	}
 }
 func Migrator(db *gorm.DB) *gormigrate.Gormigrate {

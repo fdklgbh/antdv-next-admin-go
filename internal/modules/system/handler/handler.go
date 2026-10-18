@@ -66,6 +66,14 @@ func (h *Handler) List(kind string, all bool) gin.HandlerFunc {
 		}
 	}
 }
+func (h *Handler) ConfigGroups(c *gin.Context) {
+	out, err := h.service.ConfigGroups(c.Request.Context())
+	if err != nil {
+		h.fail(c, err)
+		return
+	}
+	response.Success(c, out)
+}
 func (h *Handler) ConfigByKey(c *gin.Context) {
 	out, err := h.service.ConfigByKey(c.Request.Context(), c.Param("key"))
 	if err != nil {

@@ -25,6 +25,25 @@ type config000004 struct {
 
 func (config000004) TableName() string { return "sys_configs" }
 
+type configGroup000004 struct {
+	ID          string    `gorm:"size:64;primaryKey" json:"id"`
+	Code        string    `gorm:"size:64;not null;uniqueIndex" json:"code"`
+	Name        string    `gorm:"size:128;not null" json:"name"`
+	Description string    `gorm:"size:1000" json:"description"`
+	Sort        int       `json:"sort"`
+	CreatedAt   time.Time `json:"createTime"`
+	UpdatedAt   time.Time `json:"updateTime"`
+}
+
+func (configGroup000004) TableName() string { return "sys_config_groups" }
+
+var configGroups000004 = []configGroup000004{
+	{ID: "config_group_basic", Code: "basic", Name: "基础配置", Sort: 1},
+	{ID: "config_group_security", Code: "security", Name: "安全配置", Sort: 2},
+	{ID: "config_group_upload", Code: "upload", Name: "上传配置", Sort: 3},
+	{ID: "config_group_notification", Code: "notification", Name: "通知配置", Sort: 4},
+}
+
 type dicttype000004 struct {
 	ID          string    `gorm:"size:64;primaryKey" json:"id"`
 	Name        string    `gorm:"size:128;not null" json:"name" validate:"required,max=128"`
@@ -173,7 +192,11 @@ func migration000004Management() *gormigrate.Migration {
 				return err
 			}
 		}
-		if err := tx.AutoMigrate(&config000004{}, &dicttype000004{}, &dictdata000004{}, &file000004{}, &log000004{}); err != nil {
+		if err := tx.AutoMigrate(&configGroup000004{}, &config000004{}, &dicttype000004{}, &dictdata000004{}, &file000004{}, &log000004{}); err != nil {
+			return err
+		}
+		groups := append([]configGroup000004(nil), configGroups000004...)
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&groups).Error; err != nil {
 			return err
 		}
 		for _, route := range managementRoutes000004 {
@@ -205,7 +228,7 @@ func migration000004Management() *gormigrate.Migration {
 		if err := tx.Where("code = ?", "system.file.upload").Delete(&permission000004{}).Error; err != nil {
 			return err
 		}
-		if err := tx.Migrator().DropTable(&log000004{}, &file000004{}, &dictdata000004{}, &dicttype000004{}, &config000004{}); err != nil {
+		if err := tx.Migrator().DropTable(&log000004{}, &file000004{}, &dictdata000004{}, &dicttype000004{}, &config000004{}, &configGroup000004{}); err != nil {
 			return err
 		}
 		for _, column := range []string{"Bio", "Gender", "Phone"} {

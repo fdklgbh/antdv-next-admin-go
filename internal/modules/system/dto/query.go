@@ -26,3 +26,12 @@ type Page struct {
 	Page     int   `json:"page"`
 	PageSize int   `json:"pageSize"`
 }
+type ConfigGroup struct {
+	ID          string `gorm:"column:id" json:"id"`
+	Code        string `gorm:"column:code" json:"code"`
+	Group       string `gorm:"-" json:"group"`
+	Name        string `gorm:"column:name" json:"name"`
+	Description string `gorm:"column:description" json:"description"`
+	Sort        int    `gorm:"column:sort" json:"sort"`
+	Count       int64  `gorm:"-" json:"count"`
+}

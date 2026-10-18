@@ -136,6 +136,21 @@ func parseTime(value string) (time.Time, error) {
 	}
 	return time.Time{}, ErrInvalid
 }
+
+func (r *Repository) ConfigGroups(ctx context.Context) ([]dto.ConfigGroup, error) {
+	rows := []dto.ConfigGroup{}
+	if err := r.db.WithContext(ctx).Model(&model.ConfigGroup{}).Order("sort, code").Find(&rows).Error; err != nil {
+		return nil, wrap(err)
+	}
+	for index := range rows {
+		if err := r.db.WithContext(ctx).Model(&model.Config{}).Where("config_group = ?", rows[index].Code).Count(&rows[index].Count).Error; err != nil {
+			return nil, wrap(err)
+		}
+		rows[index].Group = rows[index].Code
+	}
+	return rows, nil
+}
+
 func (r *Repository) ConfigByKey(ctx context.Context, key string) (model.Config, error) {
 	var row model.Config
 	err := r.db.WithContext(ctx).Where("config_key = ?", key).First(&row).Error

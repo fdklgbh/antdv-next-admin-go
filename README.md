@@ -257,12 +257,12 @@ Refresh Token 是随机字符串，仅通过 HttpOnly、SameSite=Lax、Path=/api
 
 ### 管理接口
 
-迁移 000004_management 增加用户 phone/gender/bio、系统配置、字典、文件和审计表，以及管理接口的数据库路由权限映射。执行 task migrate:up 后重启 API。
+迁移 000004_management 增加用户 phone/gender/bio、系统配置、字典、文件和审计表，以及管理接口的数据库路由权限映射。执行 task migrate:up 后重启 API。迁移 000005_config_groups 增加系统配置分组查询接口的路由权限映射；迁移 000004_management 创建配置分组表并初始化基础、安全、上传、通知四个分组。
 
 - 用户：GET/POST /api/users，GET/PUT/DELETE /api/users/:id；创建必须提供 8–72 字节密码，编辑不接受密码字段；POST /api/users/change-password 校验旧密码。PUT 使用完整用户表单，roles 传角色对象数组。用户名不可修改，不允许删除超级管理员或禁用/降权超级管理员；仅超级管理员能授予 super_admin。密码修改不会额外撤销已有 Refresh 会话，JWT 仍按原有效期处理。
 - 角色：GET/POST /api/roles，GET/PUT/DELETE /api/roles/:id；GET /api/roles/options 供用户表单使用。权限传 permissions 对象数组，以服务端权限码为准。角色码不可修改，super_admin 不可编辑，内置角色不可删除；已分配的自定义角色需先解除关联。
 - 菜单/权限：GET/POST /api/permissions，GET /api/permissions/tree，GET/PUT/DELETE /api/permissions/:id。支持父子树、过滤、排序，拒绝循环父子关系；有子节点不能删除，删除权限同时移除用户、角色及接口映射中的授权。权限码不可修改。
-- 系统配置：GET /api/config/list、GET /api/config/key/:key、POST /api/config、PUT/DELETE /api/config/:id。值必须按字符串传输，服务端按 valueType 校验 string/number/boolean/json；内置项不可删除。此处为业务配置，不会修改启动 YAML。
+- 系统配置：GET /api/config/list、GET /api/config/groups、GET /api/config/key/:key、POST /api/config、PUT/DELETE /api/config/:id。新数据库迁移完成后包含基础、安全、上传、通知四个分组；`/api/config/groups` 从配置分组表返回分组及对应配置数量，供前端动态展示；值必须按字符串传输，服务端按 valueType 校验 string/number/boolean/json；内置项不可删除。此处为业务配置，不会修改启动 YAML。
 - 字典：GET /api/dict/types、GET /api/dict/type/list、POST /api/dict/type、PUT/DELETE /api/dict/type/:id；GET /api/dict/data/list、GET /api/dict/data/:typeCode、POST /api/dict/data、PUT/DELETE /api/dict/data/:id。有数据的类型不能删除，同类型值不允许重复。GET /api/dict/data/all 供所有登录用户读取启用类型下的启用项，其余字典管理接口需要权限。
 - 文件：GET /api/file/list、POST /api/file/upload（multipart file，非空且最多 10 MB）、GET /api/file/:id/download、DELETE /api/file/:id。当前内容存储在数据库，storage=database，下载强制附件；删除同时删除内容和元数据。未接入 OSS/COS。
 - 日志：GET /api/log/operation/list、GET /api/log/login/list，DELETE /api/log/operation/clear、DELETE /api/log/login/clear。记录实际登录结果和已认证写操作，不记录请求体、密码、Token 或查询参数。审计在响应之后写入独立数据库表，写入失败记录 audit_persist_failed，不回滚已完成业务。清空日志只清对应种类，不记录清空操作自身。

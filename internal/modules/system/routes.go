@@ -11,6 +11,7 @@ func (m *Module) RegisterRoutes(private *gin.RouterGroup, authorizer middleware.
 	moduleRoutes := private.Group("", middleware.RequestLogger(m.logger))
 	g := moduleRoutes.Group("", middleware.RequirePermission(authorizer))
 	g.GET("/config/list", m.handler.List("config", false))
+	g.GET("/config/groups", m.handler.ConfigGroups)
 	g.GET("/config/key/:key", m.handler.ConfigByKey)
 	g.POST("/config", m.handler.Save("config"))
 	g.PUT("/config/:id", m.handler.Save("config"))
